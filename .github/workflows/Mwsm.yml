@@ -1,0 +1,188 @@
+name: 🔄 Mwsm Version & Badge Sync
+
+# 🔐 Permite push com token pessoal
+permissions:
+  contents: write
+
+on:
+  release:
+    types: [published, edited]  # também dispara se a release for editada
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Clonar repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false  # desativa o token padrão
+          ref: main
+
+      - name: 📦 Instalar dependências
+        run: sudo apt-get install -y jq
+
+      - name: 🔍 Detectar e atualizar versões
+        id: detect
+        env:
+          GITHUB_API_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # 1) Tenta extrair tag do event JSON (robusto tanto em release event quanto em workflow_dispatch)
+          EVENT_FILE="${GITHUB_EVENT_PATH:-/dev/null}"
+          TAG_RELEASE=$(jq -r '.release.tag_name // ""' "$EVENT_FILE" 2>/dev/null || echo "")
+          TAG_RELEASE="${TAG_RELEASE##v}"  # remove "v" no início (ex: v2.0.55 → 2.0.55)
+
+          # 2) Se estiver vazio, busca a última release via API (autenticada)
+          if [ -z "$TAG_RELEASE" ]; then
+            echo "🔎 Nenhuma tag presente no evento — buscando última release publicada via API..."
+            if [ -z "${GITHUB_API_TOKEN:-}" ]; then
+              echo "⚠️ PERSONAL_TOKEN não encontrado — fazendo chamada não autenticada (pode rate-limit)."
+              TAG_RELEASE=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.tag_name // empty')
+            else
+              TAG_RELEASE=$(curl -s -H "Authorization: Bearer ${GITHUB_API_TOKEN}" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.tag_name // empty')
+            fi
+            TAG_RELEASE="${TAG_RELEASE##v}"
+          fi
+
+          if [ -z "$TAG_RELEASE" ] || [ "$TAG_RELEASE" = "null" ]; then
+            echo "❌ Nenhuma release encontrada. Abortando atualização para evitar sobrescrita de versões."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "🔎 Release detectada: $TAG_RELEASE"
+
+          # valores atuais
+          PKG_VER=$(jq -r '.version' package.json)
+          JSON_REL=$(jq -r '.version[0].release' version.json)
+          JSON_PATCH=$(jq -r '.version[0].patch' version.json || true)
+
+          echo "📦 package.json.version = $PKG_VER"
+          echo "🧩 version.json.release = $JSON_REL"
+          echo "🕒 version.json.patch   = $JSON_PATCH"
+
+          PATCH=$(TZ="America/Sao_Paulo" date +"%Y-%m-%d %H:%M:%S")
+
+          # 4) Atualiza somente se houver tag válida (não grava vazios)
+          jq --arg v "$TAG_RELEASE" --arg d "$PATCH" \
+            '.version[0].release=$v | .version[0].patch=$d' version.json > version.tmp && mv version.tmp version.json
+
+          jq --arg v "$TAG_RELEASE" '.version=$v' package.json > package.tmp && mv package.tmp package.json
+
+          echo "release=$TAG_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: 🕒 Converter patch (americano → brasileiro)
+        id: datefmt
+        run: |
+          PATCH="${{ steps.detect.outputs.patch }}"
+          if [ -n "$PATCH" ]; then
+            DATE_BR=$(date -d "$PATCH" +"%d/%m/%Y %H:%M")
+            echo "formatted=$DATE_BR" >> $GITHUB_OUTPUT
+          else
+            echo "formatted=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📝 Atualizar badges no README.md
+        if: steps.detect.outputs.updated == 'true'
+        run: |
+          # -------------------------------
+          # 🔹 Carrega versão e data formatada
+          # -------------------------------
+          RELEASE="${{ steps.detect.outputs.release }}"
+          [ -z "$RELEASE" ] && RELEASE=$(jq -r '.version' package.json)
+
+          DATE_BR="${{ steps.datefmt.outputs.formatted }}"
+          DATE_URL=${DATE_BR//\//%2F}
+          DATE_URL=${DATE_URL// /%20}
+
+          echo "🪶 Atualizando badges -> BUILD-${RELEASE} / UPDATE-${DATE_BR}"
+
+          # -------------------------------
+          # 🔹 Atualiza badges de BUILD e UPDATE
+          # -------------------------------
+          sed -i -E "s|https://img.shields.io/badge/[Bb][Uu][Ii][Ll][Dd]-[^\" >]*|https://img.shields.io/badge/Build-${RELEASE}-blue|gI" README.md
+          sed -i -E "s|https://img.shields.io/badge/[Uu][Pp][Dd][Aa][Tt][Ee]-[^\" >]*|https://img.shields.io/badge/Update-${DATE_URL}-green|gI" README.md
+
+          # -------------------------------
+          # 🔧 Corrige apenas src de badges (mantendo HTML e indentação)
+          # -------------------------------
+          # -------------------------------
+          # 🔧 Corrige badges mantendo HTML, espaçamento e evita duplicações
+          # -------------------------------
+          awk '
+            match($0, /src="([^"]*img\.shields\.io[^"]*)"/, m) {
+              url = m[1]
+
+              # Normaliza o URL (remove duplicações, erros, etc.)
+              gsub(/\?style=for-the-badge/, "", url)
+              gsub(/&style=for-the-badge/, "", url)
+
+              # Corrige escapes comuns
+              gsub(/\\\?/, "?", url)
+              gsub(/\\&/, "&", url)
+              gsub(/\\%2F/, "%2F", url)
+              gsub(/\\%20/, "%20", url)
+
+              # Se o style não existe, adiciona corretamente
+              if (url !~ /\?/) {
+                url = url "?style=for-the-badge"
+              } else if (url !~ /[?&]style=for-the-badge/) {
+                url = url "&style=for-the-badge"
+              }
+
+              # Garante que não repita
+              gsub(/\?style=for-the-badge\?style=for-the-badge/, "?style=for-the-badge", url)
+              gsub(/&style=for-the-badge&style=for-the-badge/, "&style=for-the-badge", url)
+
+              # Reconstrói a linha preservando indentação (10 espaços fixos)
+              prefix = substr($0, 1, match($0, /<img/) - 1)
+              printf "%10s<img src=\"%s\" alt=\"%s\">\n", "", url, "Badge"
+              next
+            }
+            { print }
+          ' README.md > README.tmp && mv README.tmp README.md
+
+      - name: ⏱️ Delay de segurança
+        if: steps.detect.outputs.updated == 'true'
+        run: |
+          echo "⏳ Aguardando 10 segundos antes do commit/push..."
+          sleep 10
+
+      - name: 🔍 Verificar resultado final
+        run: |
+          echo "🧾 Trecho atualizado do README:"
+          grep "img.shields.io" README.md | head -n 10
+
+      - name: 💾 Commit e push das alterações
+        if: steps.detect.outputs.updated == 'true'
+        env:
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          set -e
+          echo "💾 Preparando commit..."
+          git config --global user.name "Bot-Mwsm 🤖"
+          git config --global user.email "143403919+MKCodec@users.noreply.github.com"
+          git config --global commit.gpgsign false
+
+          # Evita erro de rebase (unstaged changes)
+          git stash --include-untracked || true
+          git pull --rebase origin main || true
+          git stash pop || true
+
+          git add README.md package.json version.json
+
+          if git diff --cached --quiet; then
+            echo "✅ Nenhuma alteração detectada — encerrando."
+          else
+            echo "🔄 Commitando e enviando alterações..."
+            git commit -m "🔄 Bot-Mwsm"
+            git push https://x-access-token:${PERSONAL_TOKEN}@github.com/${{ github.repository }}.git main
+          fi
+
