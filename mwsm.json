@@ -1,0 +1,25 @@
+{
+  "apps": [
+    {
+      "name": "Bot-Mwsm",
+      "script": "mwsm.js",
+      "cwd": "/var/api/Mwsm/",
+      "watch": ["mwsm.js"],
+      "ignore_watch": ["mwsm.db"],
+      "watch_options": {
+        "followSymlinks": false
+      }
+    },
+    {
+      "name": "Ask-Mwsm",
+      "script": "mwsm.py",
+      "cwd": "/var/api/Mwsm/",
+      "interpreter": "python3",
+      "watch": ["mwsm.py"],
+      "ignore_watch": ["mwsm.db"],
+      "watch_options": {
+        "followSymlinks": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+name: 📦 Mwsm Publish Sync
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # necessário para OIDC / Trusted Publisher
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🧩 Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Instalar jq (para editar package.json)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: 🧱 Corrigir nome do pacote temporariamente
+        run: |
+          cp package.json package_original.json
+          NAME=$(jq -r '.name' package.json)
+          LOWER=$(echo "$NAME" | tr '[:upper:]' '[:lower:]')
+          if [ "$NAME" != "$LOWER" ]; then
+            echo "🔧 Corrigindo nome do pacote: $NAME → $LOWER"
+            jq --arg name "$LOWER" '.name = $name' package.json > tmp.json && mv tmp.json package.json
+          else
+            echo "✅ Nome já está em minúsculas: $NAME"
+          fi
+          jq '.name' package.json
+
+      - name: ⚙️ Configurar Node.js (Trusted Publisher)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org/'
+          always-auth: true
+
+      - name: 📦 Instalar dependências
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: 🚀 Publicar no npm (via OIDC / Trusted Publisher)
+        run: |
+          echo "🛰️ Publicando pacote via OIDC..."
+          npm publish --access public
+        continue-on-error: false
+
+      - name: ♻️ Restaurar package.json original
+        if: always()
+        run: |
+          if [ -f package_original.json ]; then
+            mv -f package_original.json package.json
+            echo "♻️ package.json restaurado ao original"
+          fi
