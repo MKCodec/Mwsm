@@ -1,5 +1,5 @@
 {
-  "name": "Bot-Mwsm",
+  "name": "bot-mwsm",
   "version": "3.0.0",
   "description": "Bot-Mwsm: based on Whatsapp API",
   "main": "mwsm.js",
@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "axios": "^1.6.8",
-    "Emoji-API": "git+https://github.com/MKCodec/Emoji-API",
+    "Emoji-API": "git+https://github.com/MKCodec/Emoji-API.git",
     "express": "^4.19.2",
     "express-fileupload": "^1.5.0",
     "express-validator": "^7.0.1",
@@ -43,7 +43,7 @@
     "node-cron": "^3.0.3",
     "qrcode": "^1.5.3",
     "socket.io": "^2.5.0",
-    "Url2PDF": "git+https://github.com/MKCodec/Url2PDF",
+    "Url2PDF": "git+https://github.com/MKCodec/Url2PDF.git",
     "util": "^0.12.5",
     "whatsapp-web.js": "latest"
   },
@@ -51,5 +51,12 @@
     "better-sqlite3": "^9.4.3",
     "nodemon": "^3.1.0",
     "sqlite3": "^5.1.7"
-  }
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "bugs": {
+    "url": "https://github.com/MKCodec/Mwsm/issues"
+  },
+  "homepage": "https://github.com/MKCodec/Mwsm#readme"
 }
