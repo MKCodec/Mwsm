@@ -1,0 +1,199 @@
+name: 🔄 Mwsm Version Sync
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "fonts/**"
+      - "icon.png"
+      - "index.html"
+      - "jquery.js"
+      - "mwsm.db"
+      - "mwsm.js"
+      - "mwsm.json"
+      - "nodemon.json"
+      - "package.json"
+      - "script.js"
+      - "socket.io.js"
+      - "style.css"
+      - "version.json"
+      - "mwsm.py"
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.head_commit.message, '🔄 Bot-Mwsm') }}
+
+    steps:
+      - name: 🧩 Checkout do repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+
+      - name: ⚙️ Instalar dependências
+        run: sudo apt-get install -y jq curl gh
+
+      - name: 📂 Verificar arquivos modificados
+        id: detect
+        run: |
+          set -euo pipefail
+          echo "📂 Verificando arquivos modificados..."
+          git fetch origin main
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD || echo "")
+          echo "Arquivos alterados:"
+          echo "$CHANGED_FILES"
+
+          if echo "$CHANGED_FILES" | grep -q "mwsm.db"; then
+            echo "🗄️ Alteração detectada em mwsm.db — será criado novo release/tag."
+            echo "DB_CHANGED=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "🗓️ Nenhuma alteração no banco — apenas sincronização e patch."
+            echo "DB_CHANGED=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🔢 Atualizar version.json e package.json (sincroniza com último release e calcula incremento)
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          PATCH=$(TZ="America/Sao_Paulo" date +"%Y-%m-%d %H:%M:%S")
+
+          # 🔧 Correção: se o evento for "release", pega a tag diretamente do evento
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            LATEST_TAG="${GITHUB_REF_NAME:-$(jq -r '.release.tag_name' "$GITHUB_EVENT_PATH" 2>/dev/null || true)}"
+          else
+            LATEST_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)
+          fi
+
+          LATEST_TAG=$(echo "$LATEST_TAG" | sed 's/^v//' || true)
+
+          # 2) fallback lendo version.json se gh falhar
+          FILE_VER=$(jq -r '.version[0].release // empty' version.json 2>/dev/null || echo "")
+
+          if [ -n "$LATEST_TAG" ]; then
+            BASE="$LATEST_TAG"
+          elif [ -n "$FILE_VER" ]; then
+            BASE="$FILE_VER"
+          else
+            BASE="3.0.0"
+          fi
+
+          BASE="$(echo "$BASE" | tr -d '[:space:]')"
+          IFS='.' read -r MAJ MIN PAT <<< "$(echo "$BASE")"
+          MAJ=${MAJ:-0}
+          MIN=${MIN:-0}
+          PAT=${PAT:-0}
+
+          MAJ=$(echo "$MAJ" | sed 's/[^0-9]*//g')
+          MIN=$(echo "$MIN" | sed 's/[^0-9]*//g')
+          PAT=$(echo "$PAT" | sed 's/[^0-9]*//g')
+
+          MAJ=${MAJ:-0}
+          MIN=${MIN:-0}
+          PAT=${PAT:-0}
+
+          echo "🔍 Base para cálculo de versão: ${MAJ}.${MIN}.${PAT} (latest_tag='$LATEST_TAG' file_ver='$FILE_VER')"
+
+          if [ "${{ steps.detect.outputs.DB_CHANGED }}" = "true" ]; then
+            echo "🔼 mwsm.db mudou — calculando próxima versão seguindo ciclo patch->minor->major (0..99)."
+            MAJ=$((MAJ + 0))
+            MIN=$((MIN + 0))
+            PAT=$((PAT + 0))
+
+            if [ "$PAT" -lt 99 ]; then
+              PAT=$((PAT + 1))
+            else
+              PAT=0
+              if [ "$MIN" -lt 99 ]; then
+                MIN=$((MIN + 1))
+              else
+                MIN=0
+                MAJ=$((MAJ + 1))
+              fi
+            fi
+
+            NEW_VER="${MAJ}.${MIN}.${PAT}"
+            echo "🔢 Nova versão calculada por mudança no DB: $NEW_VER"
+          else
+            NEW_VER="${MAJ}.${MIN}.${PAT}"
+            echo "ℹ️ DB não mudou — sincronizando versão com última release conhecida: $NEW_VER"
+          fi
+
+          jq --arg v "$NEW_VER" --arg d "$PATCH" \
+            '.version[0].release=$v | .version[0].patch=$d' version.json > version.tmp && mv version.tmp version.json
+          jq --arg v "$NEW_VER" '.version=$v' package.json > package.tmp && mv package.tmp package.json
+
+          echo "version=$NEW_VER" >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+
+      - name: 🪶 Atualizar badges no README.md
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PATCH="${{ steps.version.outputs.patch }}"
+          DATE_BR=$(date -d "$PATCH" +"%d/%m/%Y %H:%M")
+          DATE_URL=${DATE_BR//\//%2F}
+          DATE_URL=${DATE_URL// /%20}
+
+          echo "🪶 Atualizando badges -> v${VERSION} / ${DATE_BR}"
+
+          sed -i -E "s|https://img.shields.io/badge/Build-[^\" >]*|https://img.shields.io/badge/Build-${VERSION}-blue?style=for-the-badge|gI" README.md
+          sed -i -E "s|https://img.shields.io/badge/Update-[^\" >]*|https://img.shields.io/badge/Update-${DATE_URL}-green?style=for-the-badge|gI" README.md
+
+      - name: 💾 Commit e push das alterações
+        env:
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          set -e
+          git config --global user.name "Bot-Mwsm 🤖"
+          git config --global user.email "143403919+MKCodec@users.noreply.github.com"
+          git config --global commit.gpgsign false
+
+          git add README.md package.json version.json || true
+
+          if git diff --cached --quiet; then
+            echo "✅ Nenhuma alteração detectada — encerrando."
+          else
+            echo "🔄 Commitando e enviando alterações..."
+            git commit -m "🔄 Bot-Mwsm"
+            git push https://x-access-token:${PERSONAL_TOKEN}@github.com/${{ github.repository }}.git main
+          fi
+
+      - name: 🚀 Criar release/tag automática (se banco mudou)
+        if: steps.detect.outputs.DB_CHANGED == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          echo "🚀 Criando release/tag automática $TAG"
+          gh release create "$TAG" --title "$TAG" --notes "Release automático do Bot-Mwsm"
+
+      - name: 📦 Publicar no NPM (só publica se versão não estiver no npm)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "📦 Publicando no NPM..."
+          VERSION=$(jq -r '.version[0].release' version.json)
+          jq --arg v "$VERSION" '.version=$v' package.json > package.tmp && mv package.tmp package.json
+
+          npm install --no-audit --no-fund
+
+          PUBLISHED=$(npm view bot-mwsm version 2>/dev/null || echo "")
+          echo "Versão publicada no npm: '$PUBLISHED' | versão local: '$VERSION'"
+
+          if [ "$VERSION" = "$PUBLISHED" ]; then
+            echo "⚠️ Versão $VERSION já publicada — pulando publish."
+          else
+            echo "🚀 Publicando versão $VERSION no npm..."
+            npm version --no-git-tag-version "$VERSION"
+            npm publish --access public || echo "⚠️ Falha leve na publicação (ignorando)."
+          fi

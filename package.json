@@ -1,0 +1,55 @@
+{
+  "name": "Bot-Mwsm",
+  "version": "3.0.1",
+  "description": "Bot-Mwsm: based on Whatsapp API",
+  "main": "mwsm.js",
+  "scripts": {
+    "update:wa": "npm install whatsapp-web.js@latest --silent --no-audit --no-fund",
+    "prestart": "npm run update:wa",
+    "start": "node mwsm.js",
+    "start:dev": "nodemon mwsm.js",
+    "setup:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush",
+    "setup:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush",
+    "start:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush && pm2 log 0",
+    "start:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush && pm2 log 0",
+    "restart:mwsm": "npm run update:wa && pm2 restart mwsm.json && pm2 flush && pm2 log 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MKCodec/Mwsm.git"
+  },
+  "keywords": [
+    "whatsapp-api",
+    "node.js",
+    "automation",
+    "pm2",
+    "bot"
+  ],
+  "author": "ArsNova",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "Emoji-API": "git+https://github.com/MKCodec/Emoji-API",
+    "express": "^4.19.2",
+    "express-fileupload": "^1.5.0",
+    "express-validator": "^7.0.1",
+    "http": "0.0.1-security",
+    "ip": "^2.0.1",
+    "mime-types": "^2.1.35",
+    "node-cron": "^3.0.3",
+    "qrcode": "^1.5.3",
+    "socket.io": "^2.5.0",
+    "Url2PDF": "git+https://github.com/MKCodec/Url2PDF",
+    "util": "^0.12.5",
+    "whatsapp-web.js": "^1.34.1"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^9.4.3",
+    "nodemon": "^3.1.0",
+    "sqlite3": "^5.1.7"
+  }
+}
