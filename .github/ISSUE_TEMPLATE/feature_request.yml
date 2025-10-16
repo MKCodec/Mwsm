@@ -1,0 +1,30 @@
+name: "🌟 Solicitar nova funcionalidade"
+description: Sugira uma ideia ou melhoria para o Mwsm.
+title: "[FEATURE] Descreva sua sugestão brevemente"
+labels: ["enhancement"]
+assignees: [MKCodec]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Quer sugerir algo novo? 🚀  
+        Conte-nos sua ideia abaixo!
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Descrição da funcionalidade
+      description: Explique o que você gostaria que fosse adicionado.
+      placeholder: "Exemplo: Adicionar suporte automático a OpenRouter."
+    validations:
+      required: true
+  - type: textarea
+    id: justificativa
+    attributes:
+      label: Por que isso é útil?
+      description: Qual problema ou limitação isso resolveria?
+      placeholder: "Exemplo: Facilitaria a integração com modelos externos."
+  - type: textarea
+    id: detalhes
+    attributes:
+      label: Detalhes adicionais
+      description: Inclua ideias, exemplos ou referências.

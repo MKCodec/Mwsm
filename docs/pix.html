@@ -1,0 +1,146 @@
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Doação via Pix — MKCodec</title>
+  <link rel="icon" href="https://github.githubassets.com/favicons/favicon.svg">
+  <style>
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;       /* garante altura total */
+  margin: 0;
+  padding: 10px;           /* 👈 espaço de 10px nas laterais e topo/fundo */
+  box-sizing: border-box;  /* padding incluso no cálculo */
+  overflow: hidden;        /* elimina barra de rolagem */
+}
+
+h1 {
+  color: #58a6ff;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%;
+  max-width: 600px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  box-sizing: border-box;
+}
+
+/* Mantém o layout centralizado mesmo em celulares */
+@media (max-width: 600px) {
+  body {
+    padding: 10px;
+    overflow-y: auto;  /* permite scroll só se for realmente necessário */
+  }
+}
+
+
+    pre {
+      position: relative;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      color: #79c0ff;
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    pre:hover {
+      box-shadow: 0 0 12px #23863655;
+    }
+
+/* Ícone padrão (copiar) */
+pre::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  background-image: url('https://raw.githubusercontent.com/primer/octicons/main/icons/copy-16.svg');
+  background-repeat: no-repeat;
+  background-size: contain;
+  opacity: 0.8;
+  transition: opacity 0.2s ease, background-image 0.3s ease, filter 0.3s ease;
+  filter: brightness(0) invert(1); /* 🌟 deixa branco */
+}
+
+/* Ícone quando copiado */
+pre.copiado::after {
+  background-image: url('https://raw.githubusercontent.com/primer/octicons/main/icons/check-16.svg');
+  opacity: 1;
+  filter: brightness(0) invert(1) drop-shadow(0 0 4px #00ff88);
+}
+
+
+    pre.copiado {
+      border-color: #00ff88;
+      box-shadow: 0 0 10px #00ff8888;
+    }
+
+    .footer {
+      margin-top: 20px;
+      color: #8b949e;
+      font-size: 0.9em;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>💖 Apoie o projeto Mwsm via PIX</h1>
+
+  <div class="card">
+    <p><strong>Escaneie o QR Code abaixo:</strong></p>
+    <div style="background:#FFF;padding:10px 10px 10px 10px;border-radius:8px;">
+      <center><img src="data:image/png;base64,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" alt="QR Code PIX" width="260" height="260"></center>
+    </div>
+
+    <hr style="margin: 25px 0; border: 1px solid #30363d;">
+    <p><strong>Chave Pix:</strong></p>
+
+    <pre id="pix-key" tabindex="0">e9b9d669-4412-4dec-994c-310005904088</pre>
+  </div>
+
+  <div class="footer">
+    Feito com ❤️ por 
+    <a href="https://github.com/MKCodec" target="_blank" style="color:#58a6ff;text-decoration:none;">MKCodec</a>
+  </div>
+
+  <script>
+    const pixBox = document.getElementById("pix-key");
+
+    pixBox.addEventListener("click", () => {
+      const text = pixBox.textContent.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        pixBox.classList.add("copiado");
+        setTimeout(() => {
+          pixBox.classList.remove("copiado");
+        }, 2000);
+      });
+    });
+
+    pixBox.addEventListener("blur", () => {
+      pixBox.classList.remove("copiado");
+    });
+  </script>
+</body>
+</html>

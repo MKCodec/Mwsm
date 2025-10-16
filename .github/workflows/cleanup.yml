@@ -1,0 +1,31 @@
+name: 🧹 Actions Cleaner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🧩 Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Configurar Bot-Mwsm
+        run: |
+          git config --global user.name "Bot-Mwsm 🤖"
+          git config --global user.email "143403919+MKCodec@users.noreply.github.com"
+
+      - name: 🧹 Deletar execuções antigas de workflows
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 0
+
+      - name: 🧨 Deletar artefatos antigos
+        uses: c-hive/gha-remove-artifacts@v1
+        with:
+          age: '0 days'
+          skip-tags: false
+          skip-recent: 0

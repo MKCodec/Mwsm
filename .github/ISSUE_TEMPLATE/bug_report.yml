@@ -1,0 +1,56 @@
+name: "🐞 Reportar bug"
+description: Crie um relatório para nos ajudar a melhorar o Mwsm.
+title: "[BUG] Descreva o problema brevemente"
+labels: ["bug"]
+assignees: [MKCodec]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a melhorar o **Mwsm**! 🧩  
+        Preencha as informações abaixo com o máximo de detalhes possível.
+  - type: textarea
+    id: descricao
+    attributes:
+      label: Descrição do bug
+      description: Explique claramente o que está acontecendo.
+      placeholder: "Exemplo: O comando 'mwsm update' falha ao tentar migrar o banco."
+    validations:
+      required: true
+  - type: textarea
+    id: reproducao
+    attributes:
+      label: Passos para reproduzir
+      description: Liste as etapas para reproduzir o problema.
+      placeholder: |
+        1. Vá para '...'
+        2. Execute '...'
+        3. Veja o erro
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Comportamento esperado
+      description: O que você esperava que acontecesse?
+      placeholder: "Exemplo: Esperava que a atualização fosse concluída sem erros."
+  - type: textarea
+    id: prints
+    attributes:
+      label: Capturas de tela
+      description: Se possível, adicione prints ou logs que ajudem a entender o problema.
+  - type: input
+    id: sistema
+    attributes:
+      label: Sistema operacional
+      placeholder: "Exemplo: Ubuntu 22.04 / Windows 11"
+  - type: input
+    id: versao
+    attributes:
+      label: Versão do Mwsm
+      placeholder: "Exemplo: 3.0.2"
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto adicional
+      description: Adicione qualquer outra informação relevante.
