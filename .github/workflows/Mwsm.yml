@@ -22,6 +22,7 @@ on:
       - "style.css"
       - "version.json"
       - "mwsm.py"
+      - "Dockerfile"
   release:
     types: [published, edited]
   workflow_dispatch:
@@ -33,7 +34,6 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # evita loops criados pelo próprio bot
     if: ${{ !startsWith(github.event.head_commit.message, '🔄 Bot-Mwsm') }}
 
     steps:
@@ -54,19 +54,25 @@ jobs:
           echo "📂 Verificando arquivos modificados..."
           git fetch origin main --no-tags
 
-          # lidar com repositório com apenas 1 commit ou em runners onde HEAD^ pode não existir
           if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
             CHANGED_FILES=$(git diff --name-only HEAD^ HEAD || echo "")
           else
-            # fallback: usa a lista de arquivos do último commit
             CHANGED_FILES=$(git diff --name-only HEAD || git ls-files)
           fi
 
           echo "$CHANGED_FILES"
+
+          # Detectar alterações no DB e no Dockerfile
           if echo "$CHANGED_FILES" | grep -q "mwsm.db"; then
             echo "DB_CHANGED=true" >> "$GITHUB_OUTPUT"
           else
             echo "DB_CHANGED=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q "Dockerfile"; then
+            echo "DOCKERFILE_CHANGED=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "DOCKERFILE_CHANGED=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 🔢 Atualizar version.json e package.json (sincroniza com último release e calcula incremento)
@@ -120,7 +126,6 @@ jobs:
           jq --arg v "$NEW_VER" --arg d "$PATCH" \
             '.version[0].release=$v | .version[0].patch=$d' version.json > version.tmp && mv version.tmp version.json
 
-          # normaliza o package.json: força name para 'bot-mwsm' (resolverá o 403 do npm por case)
           jq --arg v "$NEW_VER" --arg name "bot-mwsm" \
             '.version=$v | .name=$name' package.json > package.tmp && mv package.tmp package.json
 
@@ -146,7 +151,6 @@ jobs:
           git config --global user.name "Bot-Mwsm 🤖"
           git config --global user.email "143403919+MKCodec@users.noreply.github.com"
           git config --global commit.gpgsign false
-
           git add README.md package.json version.json || true
 
           if git diff --cached --quiet; then
@@ -172,83 +176,43 @@ jobs:
 
       - name: 🧩 Verificar autenticação NPM (OIDC ping)
         run: |
-          set -e
-          echo "🔍 Verificando conectividade com registry (OIDC test via npm ping)..."
           if npm ping >/dev/null 2>&1; then
-            echo "✅ npm ping ok (pode usar OIDC se configurado)."
+            echo "✅ npm ping ok (pode usar OIDC)."
           else
-            echo "⚠️ npm ping falhou — verifique Trusted Publisher no npmjs.com."
-            # não falha aqui; deixamos o publish tentar e fallback por token cuidar do resto
+            echo "⚠️ npm ping falhou — tentativa continuará mesmo assim."
           fi
 
-      - name: ⚙️ Setup Node (garante npm atualizado e registry)
+      - name: ⚙️ Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: 🔍 Mostrar versões antes do publish
-        run: |
-          node --version
-          npm --version
-          echo "package.json version:" $(jq -r .version package.json)
-          echo "version.json release:" $(jq -r '.version[0].release // .version' version.json)
-
-      - name: 📦 Publicar no NPM (Trusted Publisher - OIDC)
+      - name: 📦 Publicar no NPM (Trusted Publisher)
         id: publish_oidc
         continue-on-error: true
         run: |
-          set -e
-          echo "📦 Tentando publicar via OIDC (Trusted Publisher)..."
           VERSION=$(jq -r '.version[0].release // .version' version.json)
-          # já normalizamos name e version no passo anterior
           jq --arg v "$VERSION" '.version=$v' package.json > package.tmp && mv package.tmp package.json
-
-          # instalar dependências caso necessário para build (não deve afetar publish)
           npm ci --no-audit --no-fund || true
-
           PUBLISHED=$(npm view bot-mwsm version 2>/dev/null || echo "")
           if [ "$PUBLISHED" = "$VERSION" ]; then
-            echo "⚠️ Versão $VERSION já está publicada no npm — pulando publish."
+            echo "⚠️ Versão $VERSION já publicada — pulando."
             exit 0
           fi
-
-          # publish: se trusted publisher estiver configurado no npm, o runner usará OIDC
           npm publish --provenance --access public
 
-      - name: 📦 Fallback publish via NPM_TOKEN (se OIDC falhar)
+      - name: 📦 Fallback publish via NPM_TOKEN
         if: ${{ steps.publish_oidc.outcome == 'failure' }}
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          set -e
-          echo "⚠️ Publicação via OIDC falhou — tentando fallback com NPM_TOKEN..."
-          VERSION=$(jq -r '.version[0].release // .version' version.json)
-
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "❌ NPM_TOKEN não encontrado nas secrets. Aborting."
-            exit 1
-          fi
-
-          # configura token para registry
           npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
-
-          # re-check published just in case
-          PUBLISHED=$(npm view bot-mwsm version 2>/dev/null || echo "")
-          if [ "$PUBLISHED" = "$VERSION" ]; then
-            echo "⚠️ Versão $VERSION já publicada (detected after fallback check) — nada a fazer."
-            exit 0
-          fi
-
-          echo "🔁 Publicando versão $VERSION via token..."
-          npm publish --access public || {
-            echo "❌ Falha total no publish, mesmo com fallback."
-            exit 1
-          }
-          echo "✅ Publicação via token concluída com sucesso!"
+          VERSION=$(jq -r '.version[0].release // .version' version.json)
+          npm publish --access public
 
       - name: 🐋 Build & Push Docker Image
-        if: steps.detect.outputs.DB_CHANGED == 'true'
+        if: steps.detect.outputs.DB_CHANGED == 'true' || steps.detect.outputs.DOCKERFILE_CHANGED == 'true'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -259,16 +223,15 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           IMAGE="${DOCKERHUB_USERNAME}/mwsm"
 
-          echo "🔐 Fazendo login no Docker Hub..."
           echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
 
-          echo "🏗️ Construindo imagem ${IMAGE}:${VERSION}..."
           docker buildx create --use --name builder || true
           docker buildx build --platform linux/amd64 \
             -t "${IMAGE}:${VERSION}" \
             -t "${IMAGE}:latest" \
+            -f Dockerfile \
             --push .
 
-          echo "✅ Imagem publicada com sucesso:"
+          echo "✅ Docker atualizado com sucesso:"
           echo "   🔹 ${IMAGE}:${VERSION}"
           echo "   🔹 ${IMAGE}:latest"
