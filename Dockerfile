@@ -57,3 +57,4 @@ EXPOSE 8000 5005
 
 # Comando principal
 CMD ["pm2-runtime", "mwsm.json"]
+
