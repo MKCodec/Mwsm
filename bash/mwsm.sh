@@ -48,7 +48,7 @@ uninstall_concluido() {
 # =====================================
 # 🔍 Detectar distribuição
 # =====================================
-detect_distro_precise() {
+detect_distro() {
   local id=""
   local codename=""
 
@@ -62,23 +62,23 @@ detect_distro_precise() {
     DISTRO_DETECT="devuan"
     return 0
   fi
-  if [[ "$id" == "debian" ]]; then
-    if [[ "$codename" == "bookworm" || "$codename" == "trixie" ]]; then
-      DISTRO_DETECT="debian"
-      return 0
-    else
-      DISTRO_DETECT="debian"
-      return 0
-    fi
+
+  if [[ "$codename" == "bookworm" || "$codename" == "trixie" ]]; then
+    DISTRO_DETECT="debian"
+    return 0
   fi
 
-  # Detecta Ubuntu
   if [[ "$id" == "ubuntu" ]]; then
     DISTRO_DETECT="ubuntu"
     return 0
   fi
 
-  DISTRO_DETECT="desconhecido"
+  if [ -f /.dockerenv ] || grep -qE '/docker/' /proc/1/cgroup 2>/dev/null; then
+    DISTRO_DETECT="docker"
+    return 0
+  fi
+
+  DISTRO_DETECT="other"
   return 1
 }
 
@@ -303,7 +303,7 @@ install() {
   run_step '[[ $(df /opt --output=avail | tail -1) -gt 102400 ]]' "Validando partição..." install
 
   # Detect distribution precisely (silent)
-  detect_distro_precise
+  detect_distro
   echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] DISTRO_DETECT=$DISTRO_DETECT" >>"$LOG_FILE"
 
   if [[ "$DISTRO_DETECT" == "devuan" ]]; then
@@ -723,7 +723,7 @@ update() {
   run_step "npm config set registry https://registry.npmjs.org" "Configurando repositório NPM" update
 
   # Use precise detection for update branches if needed
-  detect_distro_precise
+  detect_distro
 
   if [[ "$DISTRO_DETECT" == "devuan" ]]; then
     run_step "$SUDO npm install -g npm@latest node-gyp@latest --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
@@ -833,7 +833,7 @@ uninstall() {
   # Removendo inicialização
   if command -v pm2 >/dev/null 2>&1; then
 
-    detect_distro_precise
+    detect_distro
 
     if [[ "$DISTRO_DETECT" == "devuan" ]]; then
       run_step "crontab -l 2>/dev/null | grep -v '/var/api/Mwsm/mwsm.js' | crontab -" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
@@ -1011,7 +1011,7 @@ clear_log_hidden() {
 # ========================
 menu() {
   command -v tput >/dev/null 2>&1 && tput civis >/dev/null 2>&1 || true
-  detect_distro_precise
+  detect_distro
   while true; do
     if [ -t 0 ]; then
       stty -echo -icanon time 0 min 0 || true
