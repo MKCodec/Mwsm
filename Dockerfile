@@ -20,10 +20,16 @@ COPY . .
 # Instalar dependências Node (produção apenas)
 RUN npm ci --omit=dev --silent --no-audit --no-fund
 
-# Instalar dependências Python (Flask e SentenceTransformer)
-RUN pip install --no-cache-dir flask==2.2.5 \
+# Instalar dependências Python (somente CPU)
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    flask==2.2.5 \
     sentence-transformers==2.2.2 \
     huggingface_hub==0.10.1
+
+# Remover caches e arquivos temporários
+RUN find /opt/venv -name "*.dist-info" -exec rm -rf {} + && \
+    find /opt/venv -name "__pycache__" -exec rm -rf {} + && \
+    rm -rf /root/.cache
 
 # ============================
 # Stage 2 – Runtime (mínimo)
@@ -31,7 +37,7 @@ RUN pip install --no-cache-dir flask==2.2.5 \
 FROM node:20-slim
 WORKDIR /app
 
-# Instalar Python runtime (sem cache)
+# Instalar Python runtime mínimo
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends python3 python3-venv && \
     rm -rf /var/lib/apt/lists/*
