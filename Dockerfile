@@ -21,7 +21,9 @@ RUN pip3 install --no-cache-dir \
     sentence-transformers==2.2.2 \
     huggingface_hub==0.10.1 \
     transformers==4.25.1 \
-    safetensors==0.3.1
+    safetensors==0.3.1 \
+    scikit-learn==1.3.0 \
+    nltk==3.8.1
 
 # Instalar PM2 globalmente
 RUN npm install -g pm2@latest
