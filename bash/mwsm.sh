@@ -31,19 +31,12 @@ pause_and_restore() {
 # ===============================
 # Diretórios dinâmicos globais
 # ===============================
-if [[ "$DISTRO_DETECT" == "docker" ]]; then
-  BASE_DIR="/app/Mwsm"
-  LOG_DIR="/app/logs"
-else
   BASE_DIR="/var/api/Mwsm"
   LOG_DIR="/var/log"
-fi
-
-LOG_FILE="$LOG_DIR/mwsm.log"
-
-mkdir -p "$BASE_DIR" "$LOG_DIR"
-touch "$LOG_FILE"
-chmod 644 "$LOG_FILE"
+  LOG_FILE="$LOG_DIR/mwsm.log"
+  mkdir -p "$BASE_DIR" "$LOG_DIR"
+  touch "$LOG_FILE"
+  chmod 644 "$LOG_FILE"
 
 
 uninstall_concluido() {
