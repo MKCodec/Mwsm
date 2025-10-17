@@ -36,7 +36,7 @@ if [[ "$DISTRO_DETECT" == "docker" ]]; then
   LOG_DIR="/app/logs"
 else
   BASE_DIR="/var/api/Mwsm"
-  LOG_DIR="/var/log/Mwsm"
+  LOG_DIR="/var/log"
 fi
 
 LOG_FILE="$LOG_DIR/mwsm.log"
