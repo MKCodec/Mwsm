@@ -6,8 +6,13 @@ WORKDIR /app
 
 # Instalar Python e dependências mínimas
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-pip git && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git && \
     rm -rf /var/lib/apt/lists/*
+
+# Criar e ativar ambiente virtual Python
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Copiar repositório Mwsm
 COPY . .
@@ -26,13 +31,17 @@ RUN pip install --no-cache-dir flask==2.2.5 \
 FROM node:20-slim
 WORKDIR /app
 
-# Copiar tudo do builder
-COPY --from=builder /app /app
-
 # Instalar Python runtime (sem cache)
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-pip && \
+    apt-get install -y --no-install-recommends python3 python3-venv && \
     rm -rf /var/lib/apt/lists/*
+
+# Copiar ambiente virtual e app do builder
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /app /app
+
+# Ativar o ambiente virtual
+ENV PATH="/opt/venv/bin:$PATH"
 
 # PM2 global (modo runtime)
 RUN npm install -g pm2 --silent --no-audit --no-fund
@@ -42,4 +51,3 @@ EXPOSE 8000 5005
 
 # Comando principal
 CMD ["pm2-runtime", "mwsm.json"]
-
