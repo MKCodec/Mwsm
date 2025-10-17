@@ -42,3 +42,4 @@ EXPOSE 8000
 
 # Iniciar via PM2 (como no Ubuntu real)
 CMD ["pm2-runtime", "npm", "--", "run", "setup:mwsm"]
+
