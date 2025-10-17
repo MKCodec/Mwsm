@@ -945,6 +945,15 @@ reinstall() {
 }
 
 view_log_hidden() {
+  # sempre restaura o terminal ao sair (mesmo se der erro)
+  cleanup_view() {
+    stty sane >/dev/null 2>&1 || true
+    tput cnorm >/dev/null 2>&1 || true
+    tput sgr0 >/dev/null 2>&1 || true
+  }
+  trap cleanup_view EXIT
+
+  cleanup_view  # garante início limpo
   while true; do
     clear
     echo "====================================="
@@ -957,50 +966,50 @@ view_log_hidden() {
     echo "-------------------------------------"
     printf "Escolha uma opção: "
 
-    while true; do
-      read -rsn1 log_choice
-      case "$log_choice" in
-      [0-3]) break ;;
-      *) continue ;;
-      esac
-    done
+    read -rsn1 log_choice
     echo "$log_choice"
 
     case $log_choice in
-    1)
-      cutoff_epoch=$(date -d '24 hours ago' +%s)
-      awk -v cutoff="$cutoff_epoch" '
-      {
-        if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
-          ts = substr($0, RSTART, RLENGTH)
-          cmd = "date -d \"" ts "\" +%s"
-          cmd | getline t
-          close(cmd)
-          if (t >= cutoff) print $0
-        }
-      }' "$LOG_FILE" | iconv -f utf-8 -t utf-8
-
-      printf "\\nPressione ENTER para voltar ao menu principal..."
-      IFS= read -r _
-      break
-      ;;
-    2)
-      cat "$LOG_FILE" | grep "^[0-9]\\{4\\}-" | iconv -f utf-8 -t utf-8
-      printf "\\nPressione ENTER para voltar ao menu principal..."
-      IFS= read -r _
-      break
-      ;;
-    3)
-      cat "$LOG_FILE" | grep -v "^[0-9]\\{4\\}-" | iconv -f utf-8 -t utf-8
-      printf "\\nPressione ENTER para voltar ao menu principal..."
-      IFS= read -r _
-      break
-      ;;
-    0)
-      break
-      ;;
+      1)
+        cleanup_view
+cutoff_date=$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S')
+grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}" "$LOG_FILE" | \
+awk -v cutoff="$cutoff_date" '
+{
+  if ($0 >= cutoff) print $0
+}' | iconv -f utf-8 -t utf-8
+        echo
+        read -rp "Pressione ENTER para voltar..."
+        ;;
+      2)
+        cleanup_view
+        grep "^[0-9]\\{4\\}-" "$LOG_FILE" | iconv -f utf-8 -t utf-8
+        echo
+        read -rp "Pressione ENTER para voltar..."
+        ;;
+      3)
+        cleanup_view
+        grep -v "^[0-9]\\{4\\}-" "$LOG_FILE" | iconv -f utf-8 -t utf-8
+        echo
+        read -rp "Pressione ENTER para voltar..."
+        ;;
+      0)
+        cleanup_view
+        break
+        ;;
+      *)
+        continue
+        ;;
     esac
   done
+
+  cleanup_view
+  trap - EXIT
+  sleep 0.1
+  clear
+stty sane >/dev/null 2>&1 || true
+tput civis >/dev/null 2>&1 || true
+
 }
 
 # ========================
@@ -1012,6 +1021,8 @@ clear_log_hidden() {
   echo "🧹 Log limpo com sucesso!"
   echo "-------------------------------------"
   sleep 2
+stty sane >/dev/null 2>&1 || true
+tput civis >/dev/null 2>&1 || true
 }
 
 # ========================
@@ -1021,9 +1032,10 @@ menu() {
   command -v tput >/dev/null 2>&1 && tput civis >/dev/null 2>&1 || true
   detect_distro
   while true; do
-    if [ -t 0 ]; then
-      stty -echo -icanon time 0 min 0 || true
-    fi
+
+if [ -t 0 ]; then
+  stty sane >/dev/null 2>&1 || true
+fi
 
     clear
 
@@ -1046,13 +1058,16 @@ menu() {
 
     command -v tput >/dev/null 2>&1 && tput civis >/dev/null 2>&1 || true
 
-    while true; do
-      read -rsn1 choice
-      case "$choice" in
-      [0-6]) break ;;  # aceita apenas 0–6
-      *) continue ;;
-      esac
-    done
+
+while true; do
+  stty -echo -icanon time 0 min 0 2>/dev/null || true
+  read -rsn1 choice
+  stty sane 2>/dev/null || true
+  case "$choice" in
+    [0-6]) break ;;
+    *) continue ;;
+  esac
+done
 
     echo "$choice"
 
