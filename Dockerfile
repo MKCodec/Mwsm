@@ -1,45 +1,44 @@
-# ========================================
-# 🐋 Mwsm - Ambiente Completo
-# ========================================
-FROM node:20-bullseye
+# ===============================
+# 🧩 Etapa 1 — Builder
+# ===============================
+FROM node:20-slim AS builder
 
-# Instalar pacotes do sistema e Python
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip python3-venv sqlite3 git curl wget jq build-essential \
-    libnss3-dev libgdk-pixbuf2.0-dev libgtk-3-dev libxss-dev libasound2 \
-    ca-certificates fonts-liberation libappindicator3-1 \
-    libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 \
-    libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
-    libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 \
-    libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 \
-    libxrender1 libxss1 libxtst6 lsb-release xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Instalar libs Python
-RUN pip3 install --no-cache-dir \
-    flask==2.2.5 \
-    sentence-transformers==2.2.2 \
-    huggingface_hub==0.10.1 \
-    transformers==4.25.1 \
-    safetensors==0.3.1 \
-    scikit-learn==1.3.0 \
-    nltk==3.8.1
+# Instalar Python + deps mínimas
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+      python3 python3-pip python3-venv git build-essential && \
+    python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    python3 -m pip install --no-cache-dir \
+      flask==2.2.5 sentence-transformers==2.2.2 huggingface_hub==0.10.1 && \
+    npm install -g pm2 --silent --no-audit --no-fund && \
+    rm -rf /var/lib/apt/lists/* /root/.cache /tmp/*
 
-# Instalar PM2 globalmente
-RUN npm install -g pm2@latest
+# Clonar e instalar o Mwsm
+RUN git clone --depth 1 https://github.com/MKCodec/Mwsm.git /app/Mwsm
+WORKDIR /app/Mwsm
+RUN npm install --omit=dev --no-audit --no-fund --silent && \
+    npm cache clean --force
 
-# Criar diretório do app
-WORKDIR /var/api/Mwsm
+# ===============================
+# 🚀 Etapa 2 — Runtime leve
+# ===============================
+FROM node:20-slim
 
-# Copiar o projeto local
-COPY . .
+WORKDIR /app/Mwsm
+ENV NODE_ENV=production PYTHONUNBUFFERED=1 DEBIAN_FRONTEND=noninteractive
 
-# Instalar dependências Node
-RUN npm install --production
+# Instalar Python mínimo e copiar ambiente
+RUN apt-get update -y && apt-get install -y --no-install-recommends python3 && \
+    rm -rf /var/lib/apt/lists/* /root/.cache /tmp/*
 
-# Expor a porta padrão
+COPY --from=builder /usr/local/lib/python3* /usr/local/lib/
+COPY --from=builder /usr/lib/python3 /usr/lib/python3
+COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=builder /usr/local/bin/pm2 /usr/local/bin/
+COPY --from=builder /app/Mwsm /app/Mwsm
+
 EXPOSE 8000
-
-# Iniciar via PM2 (como no Ubuntu real)
-CMD ["pm2-runtime", "npm", "--", "run", "setup:mwsm"]
-
+CMD ["pm2-runtime", "mwsm.js"]
