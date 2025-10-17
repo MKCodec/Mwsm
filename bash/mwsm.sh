@@ -186,6 +186,7 @@ NODE_REPO_FAILED=false
 NODE_INSTALL_FAILED=false
 NPM_INSTALL_FAILED=false
 LAST_SUCCESS=""
+export PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
 
 # =================================
 # Modo de log completo
