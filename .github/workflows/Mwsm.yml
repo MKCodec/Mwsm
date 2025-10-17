@@ -247,3 +247,28 @@ jobs:
           }
           echo "✅ Publicação via token concluída com sucesso!"
 
+      - name: 🐋 Build & Push Docker Image
+        if: steps.detect.outputs.DB_CHANGED == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -e
+          echo "🐋 Iniciando build e push da imagem Docker..."
+
+          VERSION="${{ steps.version.outputs.version }}"
+          IMAGE="${DOCKERHUB_USERNAME}/mwsm"
+
+          echo "🔐 Fazendo login no Docker Hub..."
+          echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+          echo "🏗️ Construindo imagem ${IMAGE}:${VERSION}..."
+          docker buildx create --use --name builder || true
+          docker buildx build --platform linux/amd64 \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:latest" \
+            --push .
+
+          echo "✅ Imagem publicada com sucesso:"
+          echo "   🔹 ${IMAGE}:${VERSION}"
+          echo "   🔹 ${IMAGE}:latest"
