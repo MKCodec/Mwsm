@@ -5,7 +5,7 @@
 # =====================================
 tput civis
 
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$(id -u)" -eq 0 ] || [ -f /.dockerenv ] || grep -qE '/docker/' /proc/1/cgroup 2>/dev/null; then
   SUDO=""
 else
   SUDO="sudo"
@@ -28,10 +28,28 @@ pause_and_restore() {
   tput civis >/dev/null 2>&1 || true
 }
 
+# ===============================
+# Diretórios dinâmicos globais
+# ===============================
+if [[ "$DISTRO_DETECT" == "docker" ]]; then
+  BASE_DIR="/app/Mwsm"
+  LOG_DIR="/app/logs"
+else
+  BASE_DIR="/var/api/Mwsm"
+  LOG_DIR="/var/log/Mwsm"
+fi
+
+LOG_FILE="$LOG_DIR/mwsm.log"
+
+mkdir -p "$BASE_DIR" "$LOG_DIR"
+touch "$LOG_FILE"
+chmod 644 "$LOG_FILE"
+
+
 uninstall_concluido() {
   local dirs=(
-    "/var/api/Mwsm"
-    "/var/log/Mwsm"
+    "$BASE_DIR"
+    "$LOG_DIR"
     "/root/.pm2/logs/Ask-Mwsm-out.log"
     "/root/.pm2/logs/Ask-Mwsm-error.log"
   )
@@ -83,7 +101,7 @@ detect_distro() {
 }
 
 Setup_Mwsm() {
-  local SCRIPT_PATH="/var/api/Mwsm/mwsm.sh"
+  local SCRIPT_PATH="$BASE_DIR/mwsm.sh"
   local SRC=""
   local LOG_PREFIX
   LOG_PREFIX="$(date '+%Y-%m-%d %H:%M:%S') - [SETUP]"
@@ -108,7 +126,7 @@ Setup_Mwsm() {
     return 1
   fi
 
-  if [[ -d /var/api/Mwsm && ! -f "$SCRIPT_PATH" ]]; then
+  if [[ -d $BASE_DIR && ! -f "$SCRIPT_PATH" ]]; then
     echo "$LOG_PREFIX 🔁 Restaurando mwsm.sh a partir de $SRC" >>"$LOG_FILE"
     if [ "$(id -u)" -eq 0 ]; then
       cp -- "$SRC" "$SCRIPT_PATH" 2>>"$LOG_FILE" || {
@@ -134,7 +152,7 @@ Setup_Mwsm() {
   return 0
 }
 silent_menu() {
-    local local_file="/var/api/Mwsm/mwsm.sh"
+    local local_file="$BASE_DIR/mwsm.sh"
     local remote_url="https://raw.githubusercontent.com/MKCodec/Mwsm/refs/heads/main/bash/mwsm.sh"
     if curl -sL "$remote_url" -o "$local_file"; then
         $SUDO chmod +x "$local_file" >/dev/null 2>&1
@@ -143,10 +161,6 @@ silent_menu() {
     fi
 }
 
-LOG_FILE="/var/log/mwsm.log"
-mkdir -p "$(dirname "$LOG_FILE")"
-touch "$LOG_FILE"
-chmod 644 "$LOG_FILE"
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin"
 if [ -f /etc/os-release ]; then
   . /etc/os-release
@@ -269,7 +283,7 @@ install() {
     NO_PAUSE=true
   fi
 
-  if [[ -d /var/api/Mwsm && -f /var/api/Mwsm/package.json ]]; then
+  if [[ -d $BASE_DIR && -f $BASE_DIR/package.json ]]; then
     echo "-------------------------------------"
     echo "⚠️  O Mwsm já está instalado!"
     echo "-------------------------------------"
@@ -445,22 +459,22 @@ install() {
       # -------------------------
       # Repositório Mwsm
       # -------------------------
-      run_step "rm -rf /var/api/Mwsm && mkdir -p /var/api/Mwsm && cd /var/api/Mwsm && \
+      run_step "rm -rf $BASE_DIR && mkdir -p $BASE_DIR && cd $BASE_DIR && \
       git init && git remote add origin https://github.com/MKCodec/Mwsm.git && \
       git config core.sparseCheckout true && echo -e 'fonts/\\nicon.png\\nindex.html\\njquery.js\\nmwsm.db\\nmwsm.js\\nmwsm.json\\nnodemon.json\\npackage.json\\nscript.js\\nsocket.io.js\\nstyle.css\\nversion.json\\nmwsm.py' > .git/info/sparse-checkout && \
       git pull origin main || git pull origin master" "Baixando repositório Mwsm" install
       CURRENT_USER=$(logname 2>/dev/null || echo "$USER")
-      $SUDO chown -R "$CURRENT_USER":"$CURRENT_USER" /var/api/Mwsm
+      $SUDO chown -R "$CURRENT_USER":"$CURRENT_USER" $BASE_DIR
       Setup_Mwsm
-      if [ -f /var/api/Mwsm/mwsm.sh ]; then
-        ln -sf /var/api/Mwsm/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf /var/api/Mwsm/mwsm.sh /usr/local/bin/mwsm
+      if [ -f $BASE_DIR/mwsm.sh ]; then
+        ln -sf $BASE_DIR/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf $BASE_DIR/mwsm.sh /usr/local/bin/mwsm
         chmod +x /usr/local/bin/mwsm 2>/dev/null || $SUDO chmod +x /usr/local/bin/mwsm
       fi
 
       # -------------------------
       # Dependências Node
       # -------------------------
-      cd /var/api/Mwsm || return
+      cd $BASE_DIR || return
       run_step "node -v >/dev/null 2>&1" "Verificando instalação do Node.js" install
       run_step "$SUDO npm cache clean --force" "Limpando cache NPM" install
       run_step "npm config set registry https://registry.npmjs.org" "Configurando registro NPM" install
@@ -520,7 +534,7 @@ install() {
       # Inicialização dos serviços
       # -------------------------
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        run_step "$SUDO sh -c 'crontab -l 2>/dev/null | grep -v \"/var/api/Mwsm/mwsm.js\"; echo \"@reboot cd /var/api/Mwsm && npm run start:mkauth\"' | crontab -" "Configurando inicialização" install
+        run_step "$SUDO sh -c 'crontab -l 2>/dev/null | grep -v \"$BASE_DIR/mwsm.js\"; echo \"@reboot cd $BASE_DIR && npm run start:mkauth\"' | crontab -" "Configurando inicialização" install
         run_step "$SUDO npm run setup:mkauth" "Iniciando serviços" install
       else
         run_step "$SUDO npm run setup:mwsm" "Iniciando serviços" install
@@ -542,9 +556,9 @@ install() {
       echo "-------------------------------------"
       echo "❌ Falha na instalação."
       echo "-------------------------------------"
-      if [ -d "/var/api/Mwsm" ]; then
-        rm -rf /var/api/Mwsm
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - [ROLLBACK] Diretório /var/api/Mwsm removido por falha." >>"$LOG_FILE"
+      if [ -d "$BASE_DIR" ]; then
+        rm -rf $BASE_DIR
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - [ROLLBACK] Diretório $BASE_DIR removido por falha." >>"$LOG_FILE"
       fi
     fi
   fi
@@ -569,7 +583,7 @@ install() {
 # -------------------------
 
 backup_mwsm_db() {
-  local DB_PATH="/var/api/Mwsm/mwsm.db"
+  local DB_PATH="$BASE_DIR/mwsm.db"
   local BACKUP_DIR="/tmp/Mwsm"
   local BACKUP_FILE="$BACKUP_DIR/mwsm.db"
 
@@ -588,7 +602,7 @@ migrate_mwsm() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - [MIGRATION] Iniciando migração de banco Mwsm" >>"$LOG_FILE"
 
   local SRC_DB="/tmp/Mwsm/mwsm.db"
-  local DEST_DB="/var/api/Mwsm/mwsm.db"
+  local DEST_DB="$BASE_DIR/mwsm.db"
   local SQLITE_BIN
   SQLITE_BIN=$(command -v sqlite3)
   local SYSTEM_TABLES=("attachments" "resources" "emotions" "console" "engine")
@@ -678,14 +692,14 @@ migrate_mwsm() {
 update() {
   INSTALL_FAILED=false
 
-  if [[ ! -d /var/api/Mwsm || ! -f /var/api/Mwsm/package.json ]]; then
+  if [[ ! -d $BASE_DIR || ! -f $BASE_DIR/package.json ]]; then
     echo "-------------------------------------"
     echo "⚠️  O Mwsm não está instalado!"
     echo "-------------------------------------"
     sleep 2
     return
   fi
-  cd /var/api/Mwsm || return
+  cd $BASE_DIR || return
   clear
   echo "====================================="
   echo "   🔄 Atualizando Mwsm"
@@ -706,8 +720,8 @@ update() {
   run_step "backup_mwsm_db" "Exportando dados Mwsm" update
   run_step "git fetch origin main && git reset --hard origin/main" "Atualizando repositório Mwsm" update
   Setup_Mwsm
-  if [ -f /var/api/Mwsm/mwsm.sh ]; then
-    ln -sf /var/api/Mwsm/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf /var/api/Mwsm/mwsm.sh /usr/local/bin/mwsm
+  if [ -f $BASE_DIR/mwsm.sh ]; then
+    ln -sf $BASE_DIR/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf $BASE_DIR/mwsm.sh /usr/local/bin/mwsm
     chmod +x /usr/local/bin/mwsm 2>/dev/null || $SUDO chmod +x /usr/local/bin/mwsm
   fi
   run_step "$SUDO apt-get update -y >/dev/null 2>&1" "Verificando repositórios APT" update
@@ -767,7 +781,7 @@ update() {
   run_step "migrate_mwsm" "Importando dados Mwsm" update
 
   if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    run_step "$SUDO sh -c 'crontab -l 2>/dev/null | grep -v \"/var/api/Mwsm/mwsm.js\"; echo \"@reboot cd /var/api/Mwsm && npm run start:mkauth\"' | crontab -" "Configurando inicialização" update
+    run_step "$SUDO sh -c 'crontab -l 2>/dev/null | grep -v \"$BASE_DIR/mwsm.js\"; echo \"@reboot cd $BASE_DIR && npm run start:mkauth\"' | crontab -" "Configurando inicialização" update
     run_step "$SUDO npm run setup:mkauth" "Reiniciando serviços" update
 
   else
@@ -799,7 +813,7 @@ uninstall() {
   local NO_PAUSE=false
 
   if [ "$IS_REINSTALL" = false ]; then
-    if [[ ! -d /var/api/Mwsm || ! -f /var/api/Mwsm/package.json ]]; then
+    if [[ ! -d $BASE_DIR || ! -f $BASE_DIR/package.json ]]; then
       echo "-------------------------------------"
       echo "⚠️  O Mwsm não está instalado!"
       echo "-------------------------------------"
@@ -836,7 +850,7 @@ uninstall() {
     detect_distro
 
     if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-      run_step "crontab -l 2>/dev/null | grep -v '/var/api/Mwsm/mwsm.js' | crontab -" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
+      run_step "crontab -l 2>/dev/null | grep -v '$BASE_DIR/mwsm.js' | crontab -" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
     else
       run_step "$SUDO pm2 unstartup systemd" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
     fi
@@ -861,9 +875,9 @@ uninstall() {
     run_step "skip" "Limpando cache NPM" uninstall
   fi
 
-  if [[ -d /var/api/Mwsm ]]; then
-    [[ "$PWD" =~ /var/api/Mwsm ]] && cd /root 2>/dev/null || cd /tmp
-    run_step "rm -rf /var/api/Mwsm" "Limpando diretórios" uninstall || UNINSTALL_FAILED=true
+  if [[ -d $BASE_DIR ]]; then
+    [[ "$PWD" =~ $BASE_DIR ]] && cd /root 2>/dev/null || cd /tmp
+    run_step "rm -rf $BASE_DIR" "Limpando diretórios" uninstall || UNINSTALL_FAILED=true
   else
     run_step "skip" "Limpando diretórios" uninstall
   fi
@@ -1061,11 +1075,11 @@ menu() {
         command -v tput >/dev/null 2>&1 && tput cnorm >/dev/null 2>&1 || true
         if [[ "$LAST_SUCCESS" == "install" ]]; then
           if command -v pm2 >/dev/null 2>&1; then
-            NAME=$(jq -r .name /var/api/Mwsm/package.json 2>/dev/null)
+            NAME=$(jq -r .name $BASE_DIR/package.json 2>/dev/null)
             MATCHED=""
 
-            if [[ -n "$NAME" && -f /var/api/Mwsm/mwsm.json ]]; then
-              if jq -r 'tostring' /var/api/Mwsm/mwsm.json 2>/dev/null | grep -q "$NAME"; then
+            if [[ -n "$NAME" && -f $BASE_DIR/mwsm.json ]]; then
+              if jq -r 'tostring' $BASE_DIR/mwsm.json 2>/dev/null | grep -q "$NAME"; then
                 MATCHED="$NAME"
               fi
             fi
