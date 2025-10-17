@@ -1,44 +1,44 @@
-# ===============================
-# 🧩 Etapa 1 — Builder
-# ===============================
+# ============================
+# Stage 1 – Builder (Python + Node)
+# ============================
 FROM node:20-slim AS builder
-
 WORKDIR /app
-ENV DEBIAN_FRONTEND=noninteractive
 
-# Instalar Python + deps mínimas
+# Instalar Python e dependências mínimas
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-      python3 python3-pip python3-venv git build-essential && \
-    python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    python3 -m pip install --no-cache-dir \
-      flask==2.2.5 sentence-transformers==2.2.2 huggingface_hub==0.10.1 && \
-    npm install -g pm2 --silent --no-audit --no-fund && \
-    rm -rf /var/lib/apt/lists/* /root/.cache /tmp/*
+    apt-get install -y --no-install-recommends python3 python3-pip git && \
+    rm -rf /var/lib/apt/lists/*
 
-# Clonar e instalar o Mwsm
-RUN git clone --depth 1 https://github.com/MKCodec/Mwsm.git /app/Mwsm
-WORKDIR /app/Mwsm
-RUN npm install --omit=dev --no-audit --no-fund --silent && \
-    npm cache clean --force
+# Copiar repositório Mwsm
+COPY . .
 
-# ===============================
-# 🚀 Etapa 2 — Runtime leve
-# ===============================
+# Instalar dependências Node (produção apenas)
+RUN npm ci --omit=dev --silent --no-audit --no-fund
+
+# Instalar dependências Python (Flask e SentenceTransformer)
+RUN pip install --no-cache-dir flask==2.2.5 \
+    sentence-transformers==2.2.2 \
+    huggingface_hub==0.10.1
+
+# ============================
+# Stage 2 – Runtime (mínimo)
+# ============================
 FROM node:20-slim
+WORKDIR /app
 
-WORKDIR /app/Mwsm
-ENV NODE_ENV=production PYTHONUNBUFFERED=1 DEBIAN_FRONTEND=noninteractive
+# Copiar tudo do builder
+COPY --from=builder /app /app
 
-# Instalar Python mínimo e copiar ambiente
-RUN apt-get update -y && apt-get install -y --no-install-recommends python3 && \
-    rm -rf /var/lib/apt/lists/* /root/.cache /tmp/*
+# Instalar Python runtime (sem cache)
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends python3 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/lib/python3* /usr/local/lib/
-COPY --from=builder /usr/lib/python3 /usr/lib/python3
-COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
-COPY --from=builder /usr/local/bin/pm2 /usr/local/bin/
-COPY --from=builder /app/Mwsm /app/Mwsm
+# PM2 global (modo runtime)
+RUN npm install -g pm2 --silent --no-audit --no-fund
 
-EXPOSE 8000
-CMD ["pm2-runtime", "mwsm.js"]
+# Expor portas (Node + Flask)
+EXPOSE 8000 5005
+
+# Comando principal
+CMD ["pm2-runtime", "mwsm.json"]
