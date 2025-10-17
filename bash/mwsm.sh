@@ -174,6 +174,14 @@ NPM_INSTALL_FAILED=false
 LAST_SUCCESS=""
 
 # =================================
+# Modo de log completo
+# =================================
+if [[ "$1" == "full" ]]; then
+  [ -f "$LOG_FILE" ] && tail -f "$LOG_FILE"
+  exit 0
+fi
+
+# =================================
 # Função de execução
 # =================================
 run_step() {
@@ -381,7 +389,6 @@ install() {
       apt-get install -y nodejs \
         -o Dpkg::Options::=\"--force-confdef\" \
         -o Dpkg::Options::=\"--force-confold\" --no-install-recommends
-      node -v && npm -v
     '" "Instalando Node.js" install
 
     if [ "$NODE_INSTALL_FAILED" = true ]; then
@@ -506,7 +513,7 @@ install() {
         fi
       else
         run_step "$SUDO npm install -g pm2@latest --silent --no-audit --no-fund" "Instalando PM2" install
-        run_step "$SUDO pm2 update >/dev/null 2>&1 || true" "Inicializando PM2" install
+        run_step "$SUDO timeout 15s pm2 update >/dev/null 2>&1 || { $SUDO pm2 kill >/dev/null 2>&1; rm -rf ~/.pm2; $SUDO pm2 update >/dev/null 2>&1 || true; }" "Inicializando PM2" install
       fi
 
       # -------------------------
@@ -754,7 +761,7 @@ update() {
     fi
   else
     run_step "$SUDO npm install -g pm2@latest --silent --no-audit --no-fund" "Instalando PM2" update
-    run_step "$SUDO pm2 update >/dev/null 2>&1 || true" "Inicializando PM2" update
+    run_step "$SUDO timeout 15s pm2 update >/dev/null 2>&1 || { $SUDO pm2 kill >/dev/null 2>&1; rm -rf ~/.pm2; $SUDO pm2 update >/dev/null 2>&1 || true; }" "Inicializando PM2" update
   fi
 
   run_step "migrate_mwsm" "Importando dados Mwsm" update
@@ -1004,7 +1011,7 @@ clear_log_hidden() {
 # ========================
 menu() {
   command -v tput >/dev/null 2>&1 && tput civis >/dev/null 2>&1 || true
-
+  detect_distro_precise
   while true; do
     if [ -t 0 ]; then
       stty -echo -icanon time 0 min 0 || true
@@ -1014,6 +1021,12 @@ menu() {
 
     echo "====================================="
     echo "   📦 Gerenciador do Bot-Mwsm"
+    echo "-------------------------------------"
+    if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+    echo "System: MkAuth"
+    else
+    echo "System: $(echo "$DISTRO_DETECT" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
+    fi
     echo "====================================="
     echo "1) Instalar"
     echo "2) Atualizar"
