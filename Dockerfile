@@ -2,7 +2,7 @@
 # Stage 1 – Builder (Python + Node)
 # =============================
 FROM node:20-slim AS builder
-WORKDIR /app
+WORKDIR /var/api/Mwsm
 
 # Instalar Python e dependências mínimas
 RUN apt-get update -y && \
@@ -17,10 +17,10 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Copiar repositório Mwsm
 COPY . .
 
-# Instalar dependências Node (produção apenas)
-RUN npm ci --omit=dev --silent --no-audit --no-fund
+# Instalar dependências Node (produção)
+RUN npm install --omit=dev --silent --no-audit --no-fund
 
-# Instalar dependências Python (somente CPU)
+# Instalar dependências Python (CPU-only)
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
     flask==2.2.5 \
     sentence-transformers==2.2.2 \
@@ -35,7 +35,7 @@ RUN find /opt/venv -name "*.dist-info" -exec rm -rf {} + && \
 # Stage 2 – Runtime (mínimo)
 # ============================
 FROM node:20-slim
-WORKDIR /app
+WORKDIR /var/api/Mwsm
 
 # Instalar Python runtime mínimo
 RUN apt-get update -y && \
@@ -44,7 +44,7 @@ RUN apt-get update -y && \
 
 # Copiar ambiente virtual e app do builder
 COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /app /app
+COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
 # Ativar o ambiente virtual
 ENV PATH="/opt/venv/bin:$PATH"
@@ -57,4 +57,3 @@ EXPOSE 8000 5005
 
 # Comando principal
 CMD ["pm2-runtime", "mwsm.json"]
-
