@@ -72,6 +72,41 @@ else
 fi
 
 # ==============================
+# 🔍 Detectar distribuição
+# ==============================
+detect_distro() {
+  local id=""
+  local codename=""
+
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    id=$(echo "${ID:-}" | tr '[:upper:]' '[:lower:]')
+    codename=$(grep -E '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"')
+  fi
+
+  if [[ "$id" == "devuan" ]] || grep -qi "devuan" /etc/os-release 2>/dev/null; then
+    DISTRO_DETECT="devuan"
+    return 0
+  fi
+
+  if [[ "$codename" == "bookworm" || "$codename" == "trixie" ]]; then
+    DISTRO_DETECT="debian"
+    return 0
+  fi
+
+  if [[ "$id" == "ubuntu" ]]; then
+    DISTRO_DETECT="ubuntu"
+    return 0
+  fi
+
+  DISTRO_DETECT="other"
+  return 1
+}
+
+detect_distro
+
+
+# ==============================
 # 🧾 Log
 # ==============================
 LOG_FILE="/var/log/mwsm.log"
@@ -91,22 +126,19 @@ SPIN_PID=$!
   # ==============================
   # 🧩 Correção silenciosa Debian antigo
   # ==============================
-  if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    DISTRO=$(echo "${ID:-}" | tr '[:upper:]' '[:lower:]')
-    DEBIAN_VERSION=$(grep -oP '(?<=VERSION_CODENAME=)\w+' /etc/os-release 2>/dev/null || echo "")
-    if [[ ("$DISTRO" == "debian" || "$DISTRO" == "devuan") && ("$DEBIAN_VERSION" == "buster" || "$DEBIAN_VERSION" == "stretch" || -z "$DEBIAN_VERSION") ]]; then
-      echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Corrigindo repositórios ($DEBIAN_VERSION)" >>"$LOG_FILE"
-      $SUDO bash -c '
-        sed -i "s|deb.debian.org|archive.debian.org|g" /etc/apt/sources.list
-        sed -i "s|security.debian.org|archive.debian.org/debian-security|g" /etc/apt/sources.list
-        echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99archive
-        apt-get clean -qq >/dev/null 2>&1
-        rm -rf /var/lib/apt/lists/* >/dev/null 2>&1
-        apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false -y -qq >/dev/null 2>&1
-      ' >>"$LOG_FILE" 2>&1
-    fi
-  fi
+detect_distro
+
+if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Corrigindo repositórios (Devuan)" >>"$LOG_FILE"
+  $SUDO bash -c '
+    sed -i "s|deb.debian.org|archive.debian.org|g" /etc/apt/sources.list
+    sed -i "s|security.debian.org|archive.debian.org/debian-security|g" /etc/apt/sources.list
+    echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99archive
+    apt-get clean -qq >/dev/null 2>&1
+    rm -rf /var/lib/apt/lists/* >/dev/null 2>&1
+    apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false -y -qq >/dev/null 2>&1
+  ' >>"$LOG_FILE" 2>&1
+fi
 
   # ==============================
   # 📦 Curl e dependências
