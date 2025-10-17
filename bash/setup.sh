@@ -72,6 +72,15 @@ else
 fi
 
 # ==============================
+# 🐋 Detectar Docker
+# ==============================
+if [ -f /.dockerenv ] || grep -qE '/docker/' /proc/1/cgroup 2>/dev/null; then
+  IS_DOCKER=true
+else
+  IS_DOCKER=false
+fi
+
+# ==============================
 # 🔍 Detectar distribuição
 # ==============================
 detect_distro() {
@@ -105,11 +114,11 @@ detect_distro() {
 
 detect_distro
 
-
 # ==============================
 # 🧾 Log
 # ==============================
 LOG_FILE="/var/log/mwsm.log"
+$SUDO mkdir -p "$(dirname "$LOG_FILE")" >/dev/null 2>&1
 $SUDO touch "$LOG_FILE" >/dev/null 2>&1
 $SUDO chmod 666 "$LOG_FILE" >/dev/null 2>&1
 echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Iniciando instalador" >>"$LOG_FILE"
@@ -124,42 +133,50 @@ SPIN_PID=$!
   echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Verificando dependências..." >>"$LOG_FILE"
 
   # ==============================
-  # 🧩 Correção silenciosa Debian antigo
+  # 🐋 Caso esteja em Docker, simula o setup
   # ==============================
-detect_distro
-
-if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Corrigindo repositórios (Devuan)" >>"$LOG_FILE"
-  $SUDO bash -c '
-    sed -i "s|deb.debian.org|archive.debian.org|g" /etc/apt/sources.list
-    sed -i "s|security.debian.org|archive.debian.org/debian-security|g" /etc/apt/sources.list
-    echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99archive
-    apt-get clean -qq >/dev/null 2>&1
-    rm -rf /var/lib/apt/lists/* >/dev/null 2>&1
-    apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false -y -qq >/dev/null 2>&1
-  ' >>"$LOG_FILE" 2>&1
-fi
-
-  # ==============================
-  # 📦 Curl e dependências
-  # ==============================
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Instalando curl" >>"$LOG_FILE"
-    $SUDO apt-get update -qq >/dev/null 2>&1
-    $SUDO apt-get install -y -qq curl >/dev/null 2>&1
-  fi
-
-  # ==============================
-  # 🕒 Ajuste de fuso horário e NTP
-  # ==============================
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Ajustando fuso horário e NTP" >>"$LOG_FILE"
-  if command -v timedatectl >/dev/null 2>&1; then
-    $SUDO timedatectl set-timezone America/Sao_Paulo >/dev/null 2>&1
-    $SUDO timedatectl set-ntp true >/dev/null 2>&1
+  if [ "$IS_DOCKER" = true ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Ambiente Docker detectado - pulando instalação de pacotes e ajustes de sistema" >>"$LOG_FILE"
+    sleep 2
   else
-    $SUDO ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime >/dev/null 2>&1
-    echo "America/Sao_Paulo" | $SUDO tee /etc/timezone >/dev/null 2>&1
-    command -v hwclock >/dev/null 2>&1 && $SUDO hwclock --systohc >/dev/null 2>&1
+    # ==============================
+    # 🧩 Correção silenciosa Debian antigo
+    # ==============================
+    detect_distro
+
+    if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Corrigindo repositórios (Devuan)" >>"$LOG_FILE"
+      $SUDO bash -c '
+        sed -i "s|deb.debian.org|archive.debian.org|g" /etc/apt/sources.list
+        sed -i "s|security.debian.org|archive.debian.org/debian-security|g" /etc/apt/sources.list
+        echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99archive
+        apt-get clean -qq >/dev/null 2>&1
+        rm -rf /var/lib/apt/lists/* >/dev/null 2>&1
+        apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false -y -qq >/dev/null 2>&1
+      ' >>"$LOG_FILE" 2>&1
+    fi
+
+    # ==============================
+    # 📦 Curl e dependências
+    # ==============================
+    if ! command -v curl >/dev/null 2>&1; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Instalando curl" >>"$LOG_FILE"
+      $SUDO apt-get update -qq >/dev/null 2>&1
+      $SUDO apt-get install -y -qq curl >/dev/null 2>&1
+    fi
+
+    # ==============================
+    # 🕒 Ajuste de fuso horário e NTP
+    # ==============================
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Ajustando fuso horário e NTP" >>"$LOG_FILE"
+    if command -v timedatectl >/dev/null 2>&1; then
+      $SUDO timedatectl set-timezone America/Sao_Paulo >/dev/null 2>&1
+      $SUDO timedatectl set-ntp true >/dev/null 2>&1
+    else
+      $SUDO ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime >/dev/null 2>&1
+      echo "America/Sao_Paulo" | $SUDO tee /etc/timezone >/dev/null 2>&1
+      command -v hwclock >/dev/null 2>&1 && $SUDO hwclock --systohc >/dev/null 2>&1
+    fi
   fi
 
   # ==============================
