@@ -1023,9 +1023,9 @@ menu() {
     echo "   📦 Gerenciador do Bot-Mwsm"
     echo "-------------------------------------"
     if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    echo "System: MkAuth"
+    echo "Sistema: MkAuth"
     else
-    echo "System: $(echo "$DISTRO_DETECT" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
+    echo "Sistema: $(echo "$DISTRO_DETECT" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
     fi
     echo "====================================="
     echo "1) Instalar"
