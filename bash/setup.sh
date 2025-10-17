@@ -65,7 +65,7 @@ spinner_start() {
 # ==============================
 # 🔍 Detecta sudo
 # ==============================
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$(id -u)" -eq 0 ] || [ -f /.dockerenv ] || grep -qE '/docker/' /proc/1/cgroup 2>/dev/null; then
   SUDO=""
 else
   SUDO="sudo"
@@ -110,13 +110,25 @@ detect_distro() {
 
 detect_distro
 
-# ==============================
-# 🧾 Log
-# ==============================
-LOG_FILE="/var/log/mwsm.log"
-$SUDO mkdir -p "$(dirname "$LOG_FILE")" >/dev/null 2>&1
-$SUDO touch "$LOG_FILE" >/dev/null 2>&1
-$SUDO chmod 666 "$LOG_FILE" >/dev/null 2>&1
+
+
+# ===============================
+# 🧾 Diretórios dinâmicos globais
+# ===============================
+if [[ "$DISTRO_DETECT" == "docker" ]]; then
+  BASE_DIR="/app/Mwsm"
+  LOG_DIR="/app/logs"
+else
+  BASE_DIR="/var/api/Mwsm"
+  LOG_DIR="/var/log/Mwsm"
+fi
+
+LOG_FILE="$LOG_DIR/mwsm.log"
+
+mkdir -p "$BASE_DIR" "$LOG_DIR"
+touch "$LOG_FILE"
+chmod 644 "$LOG_FILE"
+
 echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Iniciando instalador" >>"$LOG_FILE"
 
 # ==============================
@@ -179,9 +191,9 @@ SPIN_PID=$!
   # ⬇️ Download do mwsm.sh
   # ==============================
   echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Baixando mwsm.sh" >>"$LOG_FILE"
-  $SUDO mkdir -p /var/api/Mwsm >/dev/null 2>&1
+  $SUDO mkdir -p "$BASE_DIR" >/dev/null 2>&1
   MWSM_URL="https://raw.githubusercontent.com/MKCodec/Mwsm/refs/heads/main/bash/mwsm.sh?nocache=$(date +%s)"
-  MWSM_FILE="/var/api/Mwsm/mwsm.sh"
+  MWSM_FILE="$BASE_DIR/mwsm.sh"
   $SUDO curl -sSL "$MWSM_URL" -o "$MWSM_FILE" >/dev/null 2>&1
   $SUDO chmod +x "$MWSM_FILE" >/dev/null 2>&1
 
@@ -197,7 +209,7 @@ wait $SPIN_PID 2>/dev/null
 # ==============================
 # 🧪 Verificação
 # ==============================
-if ! grep -q '# 📦 Gerenciador do Bot-Mwsm' /var/api/Mwsm/mwsm.sh 2>/dev/null; then
+if ! grep -q '# 📦 Gerenciador do Bot-Mwsm' $BASE_DIR/mwsm.sh 2>/dev/null; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Erro ao baixar mwsm.sh" >>"$LOG_FILE"
   stty sane; tput cnorm; exit 1
 fi
@@ -208,11 +220,11 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Setup concluído com sucesso" >>"$L
 # 🚀 Executa menu principal
 # ==============================
 clear
-cd /var/api/Mwsm >/dev/null 2>&1
+cd "$BASE_DIR" >/dev/null 2>&1
 stty sane
 tput cnorm
-if [ -f /var/api/Mwsm/mwsm.sh ]; then
-  ln -sf /var/api/Mwsm/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf /var/api/Mwsm/mwsm.sh /usr/local/bin/mwsm
+if [ -f "$BASE_DIR"/mwsm.sh ]; then
+  ln -sf "$BASE_DIR"/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf "$BASE_DIR"/mwsm.sh /usr/local/bin/mwsm
   chmod +x /usr/local/bin/mwsm 2>/dev/null || $SUDO chmod +x /usr/local/bin/mwsm
 fi
 exec bash ./mwsm.sh
