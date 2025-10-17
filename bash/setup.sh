@@ -72,15 +72,6 @@ else
 fi
 
 # ==============================
-# 🐋 Detectar Docker
-# ==============================
-if [ -f /.dockerenv ] || grep -qE '/docker/' /proc/1/cgroup 2>/dev/null; then
-  IS_DOCKER=true
-else
-  IS_DOCKER=false
-fi
-
-# ==============================
 # 🔍 Detectar distribuição
 # ==============================
 detect_distro() {
@@ -105,6 +96,11 @@ detect_distro() {
 
   if [[ "$id" == "ubuntu" ]]; then
     DISTRO_DETECT="ubuntu"
+    return 0
+  fi
+
+  if [ -f /.dockerenv ] || grep -qE '/docker/' /proc/1/cgroup 2>/dev/null; then
+    DISTRO_DETECT="docker"
     return 0
   fi
 
@@ -133,9 +129,9 @@ SPIN_PID=$!
   echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Verificando dependências..." >>"$LOG_FILE"
 
   # ==============================
-  # 🐋 Caso esteja em Docker, simula o setup
+  # 🐋 Caso esteja em Docker
   # ==============================
-  if [ "$IS_DOCKER" = true ]; then
+  if [[ "$DISTRO_DETECT" == "docker" ]]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Ambiente Docker detectado - pulando instalação de pacotes e ajustes de sistema" >>"$LOG_FILE"
     sleep 2
   else
