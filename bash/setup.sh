@@ -157,14 +157,23 @@ SPIN_PID=$!
       ' >>"$LOG_FILE" 2>&1
     fi
 
-    # ==============================
-    # 📦 Curl e dependências
-    # ==============================
-    if ! command -v curl >/dev/null 2>&1; then
-      echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Instalando curl" >>"$LOG_FILE"
-      $SUDO apt-get update -qq >/dev/null 2>&1
-      $SUDO apt-get install -y -qq git curl >/dev/null 2>&1
-    fi
+# ==============================
+# 📦 Curl e dependências
+# ==============================
+if ! command -v curl >/dev/null 2>&1; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Instalando curl" >>"$LOG_FILE"
+  $SUDO apt-get update -qq >/dev/null 2>&1
+  $SUDO apt-get install -y -qq curl >/dev/null 2>&1
+fi
+
+# ==============================
+# 🧰 Git e dependências
+# ==============================
+if ! command -v git >/dev/null 2>&1; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Instalando git" >>"$LOG_FILE"
+  $SUDO apt-get update -qq >/dev/null 2>&1
+  $SUDO apt-get install -y -qq git >/dev/null 2>&1
+fi
 
     # ==============================
     # 🕒 Ajuste de fuso horário e NTP
