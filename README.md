@@ -59,7 +59,7 @@ permitindo enviar mensagens, sincronizar cobranças e gerenciar comunicações c
 
 ## 🧠 Requisitos
 
-- Servidor Linux (Ubuntu/Proxmox ou Debian/MkAuth)
+- Servidor Linux (CT Proxmox, MkAuth ou Docker)
 - [API MkAuth](https://github.com/MKCodec/MkAuth-API) modificada para uso com Mwsm
 - Conexão estável com o WhatsApp Web
 
