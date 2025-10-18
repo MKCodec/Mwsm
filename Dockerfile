@@ -1,20 +1,20 @@
 # =============================
-# Stage 1 – Builder (Python + Node)
+# Stage 1 – Builder (Node + Python)
 # =============================
 FROM node:20-slim AS builder
 WORKDIR /var/api/Mwsm
 
-# Instalar Python e dependências mínimas
+# Instalar Python, Git e utilitários essenciais
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Criar e ativar ambiente virtual Python
+# Criar ambiente virtual Python
 ENV VIRTUAL_ENV=/opt/venv
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Copiar repositório Mwsm
+# Copiar repositório
 COPY . .
 
 # Instalar dependências Node (produção)
@@ -26,34 +26,47 @@ RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/wh
     sentence-transformers==2.2.2 \
     huggingface_hub==0.10.1
 
-# Remover caches e arquivos temporários
+# Limpeza de cache
 RUN find /opt/venv -name "*.dist-info" -exec rm -rf {} + && \
     find /opt/venv -name "__pycache__" -exec rm -rf {} + && \
     rm -rf /root/.cache
 
+
 # ============================
-# Stage 2 – Runtime (mínimo)
+# Stage 2 – Runtime (final)
 # ============================
 FROM node:20-slim
 WORKDIR /var/api/Mwsm
 
-# Instalar Python runtime mínimo
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-venv && \
+# Dependências do Chromium / Puppeteer / WhatsApp Web
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 \
+    libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 \
+    libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 \
+    libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
+    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 lsb-release \
+    wget curl git jq xdg-utils build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Copiar ambiente virtual e app do builder
+# Python runtime mínimo
+RUN apt-get install -y --no-install-recommends python3 python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copiar ambiente e app do builder
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
-# Ativar o ambiente virtual
+# Ativar ambiente virtual
 ENV PATH="/opt/venv/bin:$PATH"
 
-# PM2 global (modo runtime)
+# Instalar PM2 global
 RUN npm install -g pm2 --silent --no-audit --no-fund
+
+# Baixar e preparar Chromium para Puppeteer
+RUN node -e "try{require('puppeteer-core').createBrowserFetcher().download('1045629')}catch(e){console.error(e)}"
 
 # Expor portas (Node + Flask)
 EXPOSE 8000 5005
 
-# Comando principal
+# Comando de inicialização principal
 CMD ["pm2-runtime", "mwsm.json"]
