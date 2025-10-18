@@ -458,13 +458,11 @@ else
 fi
 
 run_step "command -v pip3 >/dev/null 2>&1 && \
-  $SUDO python3 -m pip show flask >/dev/null 2>&1 && \
-  $SUDO python3 -m pip show sentence-transformers >/dev/null 2>&1 && \
-  $SUDO python3 -m pip show huggingface_hub >/dev/null 2>&1" \
+  python3 -m pip show flask >/dev/null 2>&1 || $SUDO python3 -m pip show flask >/dev/null 2>&1 && \
+  python3 -m pip show sentence-transformers >/dev/null 2>&1 || $SUDO python3 -m pip show sentence-transformers >/dev/null 2>&1 && \
+  python3 -m pip show huggingface_hub >/dev/null 2>&1 || $SUDO python3 -m pip show huggingface_hub >/dev/null 2>&1" \
   'Verificando integridade Python' install
-
-      
-
+  
 # -------------------------
 # Repositório Mwsm
 # -------------------------
