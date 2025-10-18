@@ -6,7 +6,8 @@ WORKDIR /var/api/Mwsm
 
 # Instalar Python, Git e utilitários essenciais
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git curl && \
+    apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv git curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Criar ambiente virtual Python
@@ -26,7 +27,7 @@ RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/wh
     sentence-transformers==2.2.2 \
     huggingface_hub==0.10.1
 
-# Limpeza de cache
+# Limpeza de cache Python
 RUN find /opt/venv -name "*.dist-info" -exec rm -rf {} + && \
     find /opt/venv -name "__pycache__" -exec rm -rf {} + && \
     rm -rf /root/.cache
@@ -38,7 +39,7 @@ RUN find /opt/venv -name "*.dist-info" -exec rm -rf {} + && \
 FROM node:20-slim
 WORKDIR /var/api/Mwsm
 
-# Dependências do Chromium / Puppeteer / WhatsApp Web
+# Instalar dependências do Chromium / Puppeteer / WhatsApp Web
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 \
     libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 \
@@ -48,11 +49,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl git jq xdg-utils build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Python runtime mínimo
+# Instalar Python runtime mínimo
 RUN apt-get install -y --no-install-recommends python3 python3-venv && \
     rm -rf /var/lib/apt/lists/*
 
-# Copiar ambiente e app do builder
+# Copiar ambiente Python e app do builder
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
@@ -62,12 +63,15 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Instalar PM2 global
 RUN npm install -g pm2 --silent --no-audit --no-fund
 
-# Baixar e preparar Chromium para Puppeteer
-RUN node -e "try{require('puppeteer-core').createBrowserFetcher().download('1045629')}catch(e){console.error(e)}"
+# Desativar sandbox do Chromium (necessário em containers)
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV CHROMIUM_FLAGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage"
+
+# Forçar Puppeteer a baixar o Chromium correto
+RUN node -e "try{require('puppeteer').launch({headless:'new',args:['--no-sandbox','--disable-setuid-sandbox']}).then(b=>b.close()).catch(e=>console.error(e))}catch(e){console.error(e)}"
 
 # Expor portas (Node + Flask)
 EXPOSE 8000 5005
 
-# Comando de inicialização principal
-CMD ["pm2-runtime", "mwsm.json"]
-
+# Comando principal — inicia via PM2 sem sandbox
+CMD ["pm2-runtime", "mwsm.json", "--", "--no-sandbox"]
