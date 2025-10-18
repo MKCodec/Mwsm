@@ -38,6 +38,10 @@ pause_and_restore() {
   touch "$LOG_FILE"
   chmod 644 "$LOG_FILE"
 
+if [ -s /proc/$$/fd/0 ]; then
+    cat /proc/$$/fd/0 > "$BASE_DIR/mwsm.sh"
+    chmod +x "$BASE_DIR/mwsm.sh"
+fi
 
 uninstall_concluido() {
   local dirs=(
