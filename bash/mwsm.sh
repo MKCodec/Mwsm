@@ -417,68 +417,58 @@ run_step "$SUDO bash -c '
       printf "❌ Iniciando serviços\n"
       INSTALL_FAILED=true
     else
-      # -------------------------
-      # 🐍 Python + Pip + Libs
-      # -------------------------
-      run_step "$SUDO apt update -y >/dev/null 2>&1 && \
-        $SUDO apt install -y python3 python3-pip python3-venv \
-        -o Dpkg::Options::='--force-confdef' \
-        -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
-        'Instalando Python' install
 
-      if ! command -v pip3 >/dev/null 2>&1; then
-        run_step "$SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1" \
-          'Restaurando pip' install
-      fi
+# -------------------------
+# 🐍 Python + Pip + Libs
+# -------------------------
+run_step "$SUDO apt update -y >/dev/null 2>&1 && \
+  $SUDO apt install -y python3 python3-pip python3-venv \
+  -o Dpkg::Options::='--force-confdef' \
+  -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
+  'Instalando Python' install
+
+if ! command -v pip3 >/dev/null 2>&1; then
+  run_step "$SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1" \
+    'Restaurando pip' install
+fi
 
 run_step "cd /tmp && \
   PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  { $SUDO python3 -m pip install --quiet --no-input --upgrade \
-    pip setuptools wheel 2>/dev/null || \
-    $SUDO python3 -m pip install --quiet --no-input --upgrade \
-    pip setuptools wheel --break-system-packages 2>/dev/null || \
-    $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1; }" \
+  $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1 && \
+  $SUDO python3 -m pip install --no-input --quiet --upgrade setuptools wheel >/dev/null 2>&1 || true" \
   'Atualizando Python' install
 
-
-      if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        run_step "cd /tmp && \
-          PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-          $SUDO python3 -m pip install --quiet --no-input \
-          'flask==2.2.5' \
-          'sentence-transformers==2.2.2' \
-          'transformers==4.25.1' \
-          'safetensors==0.3.1' \
-          'huggingface_hub==0.10.1'" \
-          'Instalando libs Python' install
-      else
-run_step "cd /tmp && \
-  PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  { $SUDO python3 -m pip install --quiet --no-input \
-    'flask==2.2.5' \
-    'sentence-transformers==2.2.2' \
-    'huggingface_hub==0.10.1' --break-system-packages 2>/dev/null || \
+if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+  run_step "cd /tmp && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO python3 -m pip install --quiet --no-input \
     'flask==2.2.5' \
     'sentence-transformers==2.2.2' \
-    'huggingface_hub==0.10.1' 2>/dev/null; }" \
-  'Instalando libs Python' install
-      fi
+    'transformers==4.25.1' \
+    'safetensors==0.3.1' \
+    'huggingface_hub==0.10.1'" \
+    'Instalando libs Python' install
+else
+  run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    $SUDO python3 -m pip install --quiet --no-input \
+    'flask==2.2.5' \
+    'sentence-transformers==2.2.2' \
+    'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
+    'Instalando libs Python' install
+fi
 
 run_step "command -v pip3 >/dev/null 2>&1 && \
-  python3 -m pip show flask >/dev/null 2>&1 && \
-  python3 -m pip show sentence-transformers >/dev/null 2>&1 && \
-  python3 -m pip show huggingface_hub >/dev/null 2>&1" \
+  $SUDO python3 -m pip show flask >/dev/null 2>&1 && \
+  $SUDO python3 -m pip show sentence-transformers >/dev/null 2>&1 && \
+  $SUDO python3 -m pip show huggingface_hub >/dev/null 2>&1" \
   'Verificando integridade Python' install
 
+      
 
 # -------------------------
 # Repositório Mwsm
 # -------------------------
-# Cria cópia temporária do script atual
 cp "$0" "$TMP_SCRIPT" >/dev/null 2>&1 || true
-
-# Remove o diretório antigo e clona apenas os arquivos necessários
 run_step "rm -rf $BASE_DIR && mkdir -p $BASE_DIR && cd $BASE_DIR && \
 git init && git remote add origin https://github.com/MKCodec/Mwsm.git && \
 git config core.sparseCheckout true && \
@@ -491,7 +481,6 @@ if [ -f "$BASE_DIR/mwsm.sh" ]; then
   exit 0
 fi
 
-# Restaura o script mwsm.sh para o diretório base
 if [ -f "$TMP_SCRIPT" ]; then
   cp "$TMP_SCRIPT" "$BASE_DIR/mwsm.sh" >/dev/null 2>&1
   chmod +x "$BASE_DIR/mwsm.sh"
