@@ -34,6 +34,7 @@ pause_and_restore() {
   BASE_DIR="/var/api/Mwsm"
   LOG_DIR="/var/log"
   LOG_FILE="$LOG_DIR/mwsm.log"
+  TMP_SCRIPT="/tmp/mwsm.sh"
   mkdir -p "$BASE_DIR" "$LOG_DIR"
   touch "$LOG_FILE"
   chmod 644 "$LOG_FILE"
@@ -471,20 +472,35 @@ run_step "command -v pip3 >/dev/null 2>&1 && \
   'Verificando integridade Python' install
 
 
-      # -------------------------
-      # Repositório Mwsm
-      # -------------------------
-      run_step "rm -rf $BASE_DIR && mkdir -p $BASE_DIR && cd $BASE_DIR && \
-      git init && git remote add origin https://github.com/MKCodec/Mwsm.git && \
-      git config core.sparseCheckout true && echo -e 'fonts/\\nicon.png\\nindex.html\\njquery.js\\nmwsm.db\\nmwsm.js\\nmwsm.json\\nnodemon.json\\npackage.json\\nscript.js\\nsocket.io.js\\nstyle.css\\nversion.json\\nmwsm.py' > .git/info/sparse-checkout && \
-      git pull origin main || git pull origin master" "Baixando repositório Mwsm" install
-      CURRENT_USER=$(logname 2>/dev/null || echo "$USER")
-      $SUDO chown -R "$CURRENT_USER":"$CURRENT_USER" $BASE_DIR
-      Setup_Mwsm
-      if [ -f $BASE_DIR/mwsm.sh ]; then
-        ln -sf $BASE_DIR/mwsm.sh /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf $BASE_DIR/mwsm.sh /usr/local/bin/mwsm
-        chmod +x /usr/local/bin/mwsm 2>/dev/null || $SUDO chmod +x /usr/local/bin/mwsm
-      fi
+# -------------------------
+# Repositório Mwsm
+# -------------------------
+# Cria cópia temporária do script atual
+cp "$0" "$TMP_SCRIPT" >/dev/null 2>&1 || true
+
+# Remove o diretório antigo e clona apenas os arquivos necessários
+run_step "rm -rf $BASE_DIR && mkdir -p $BASE_DIR && cd $BASE_DIR && \
+git init && git remote add origin https://github.com/MKCodec/Mwsm.git && \
+git config core.sparseCheckout true && \
+echo -e 'fonts/\nicon.png\nindex.html\njquery.js\nmwsm.db\nmwsm.js\nmwsm.json\nnodemon.json\npackage.json\nscript.js\nsocket.io.js\nstyle.css\nversion.json\nmwsm.py' > .git/info/sparse-checkout && \
+git pull origin main || git pull origin master" "Baixando repositório Mwsm" install
+
+# 🧩 Se já existir instalação anterior, ativa modo silencioso
+if [ -f "$BASE_DIR/mwsm.sh" ]; then
+  silent_menu
+  exit 0
+fi
+
+# Restaura o script mwsm.sh para o diretório base
+if [ -f "$TMP_SCRIPT" ]; then
+  cp "$TMP_SCRIPT" "$BASE_DIR/mwsm.sh" >/dev/null 2>&1
+  chmod +x "$BASE_DIR/mwsm.sh"
+  ln -sf "$BASE_DIR/mwsm.sh" /usr/local/bin/mwsm 2>/dev/null || $SUDO ln -sf "$BASE_DIR/mwsm.sh" /usr/local/bin/mwsm
+  rm -f "$TMP_SCRIPT"
+fi
+
+CURRENT_USER=$(logname 2>/dev/null || echo "$USER")
+$SUDO chown -R "$CURRENT_USER":"$CURRENT_USER" "$BASE_DIR"
 
       # -------------------------
       # Dependências Node
