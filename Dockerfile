@@ -1,6 +1,5 @@
 # =========================
 # 🧱 Etapa 1: Builder
-# (Instala dependências do sistema e constrói o ambiente de software)
 # =========================
 FROM node:20-bullseye AS builder
 
@@ -72,3 +71,4 @@ RUN npm install -g pm2 --silent --no-audit --no-fund
 EXPOSE 8000 5005
 
 CMD ["pm2-runtime", "start", "mwsm.json"]
+
