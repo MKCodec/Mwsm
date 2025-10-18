@@ -133,12 +133,23 @@ SPIN_PID=$!
   # 🐋 Caso esteja em Docker (modo ultrarrápido)
   # ==============================
   if [[ "$DISTRO_DETECT" == "docker" ]]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Ambiente Docker detectado - usando modo rápido" >>"$LOG_FILE"
-    $SUDO mkdir -p /var/api/Mwsm >/dev/null 2>&1
-    MWSM_URL="https://raw.githubusercontent.com/MKCodec/Mwsm/refs/heads/main/bash/mwsm.sh?nocache=$(date +%s)"
-    $SUDO curl -sSL "$MWSM_URL" -o /var/api/Mwsm/mwsm.sh >/dev/null 2>&1
-    $SUDO chmod +x /var/api/Mwsm/mwsm.sh >/dev/null 2>&1
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Docker pronto, prosseguindo" >>"$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Ambiente Docker detectado - iniciando modo ultrarrápido" >>"$LOG_FILE"
+    if ! systemctl is-active --quiet docker; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Iniciando serviço Docker" >>"$LOG_FILE"
+      $SUDO systemctl start docker >/dev/null 2>&1
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Baixando imagem mkcodec/mwsm:latest" >>"$LOG_FILE"
+    $SUDO docker pull mkcodec/mwsm:latest >/dev/null 2>&1
+    if $SUDO docker ps -a --format '{{.Names}}' | grep -q '^mwsm$'; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Removendo container antigo Mwsm" >>"$LOG_FILE"
+      $SUDO docker stop mwsm >/dev/null 2>&1
+      $SUDO docker rm mwsm >/dev/null 2>&1
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Iniciando container Mwsm" >>"$LOG_FILE"
+    $SUDO docker run -d --name mwsm -p 8000:8000 -p 5005:5005 mkcodec/mwsm:latest >/dev/null 2>&1
+    sleep 5
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [SETUP] Acessando logs do PM2 dentro do container" >>"$LOG_FILE"
+    $SUDO docker exec -it mwsm pm2 logs
   else
     # ==============================
     # 🧩 Correção silenciosa Debian antigo
