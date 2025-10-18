@@ -428,9 +428,13 @@ run_step "$SUDO bash -c '
 
 run_step "cd /tmp && \
   PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  { $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel --break-system-packages 2>/dev/null || \
-    $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel 2>/dev/null; }" \
+  { $SUDO python3 -m pip install --quiet --no-input --upgrade \
+    pip setuptools wheel 2>/dev/null || \
+    $SUDO python3 -m pip install --quiet --no-input --upgrade \
+    pip setuptools wheel --break-system-packages 2>/dev/null || \
+    $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1; }" \
   'Atualizando Python' install
+
 
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
         run_step "cd /tmp && \
@@ -445,10 +449,14 @@ run_step "cd /tmp && \
       else
 run_step "cd /tmp && \
   PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  $SUDO python3 -m pip install --quiet --no-input \
-  'flask==2.2.5' \
-  'sentence-transformers==2.2.2' \
-  'huggingface_hub==0.10.1' --break-system-packages" \
+  { $SUDO python3 -m pip install --quiet --no-input \
+    'flask==2.2.5' \
+    'sentence-transformers==2.2.2' \
+    'huggingface_hub==0.10.1' --break-system-packages 2>/dev/null || \
+    $SUDO python3 -m pip install --quiet --no-input \
+    'flask==2.2.5' \
+    'sentence-transformers==2.2.2' \
+    'huggingface_hub==0.10.1' 2>/dev/null; }" \
   'Instalando libs Python' install
       fi
 
