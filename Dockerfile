@@ -1,6 +1,6 @@
-# =============================
+# ==================================
 # Stage 1 – Builder (Node + Python)
-# =============================
+# ==================================
 FROM node:20-slim AS builder
 WORKDIR /var/api/Mwsm
 
@@ -70,3 +70,4 @@ EXPOSE 8000 5005
 
 # Comando de inicialização principal
 CMD ["pm2-runtime", "mwsm.json"]
+
