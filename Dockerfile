@@ -49,11 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Instalar Python runtime mínimo
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-venv && \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv && \
     rm -rf /var/lib/apt/lists/*
 
-# Copiar ambiente e app do builder
+# Copiar ambiente virtual e app do builder
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
@@ -63,17 +62,14 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Instalar PM2 global
 RUN npm install -g pm2 --silent --no-audit --no-fund
 
-# 🔹 Instalar Puppeteer completo (com Chromium)
-RUN npm install puppeteer@21.3.8 --silent --no-audit --no-fund && \
-    npx puppeteer browsers install chrome
+# 🔹 Instalar Puppeteer completo (com Chromium embutido)
+RUN npm install puppeteer@21.3.8 --silent --no-audit --no-fund
 
-# 🔹 Variáveis para evitar erros do Puppeteer em Docker
-ENV PUPPETEER_EXECUTABLE_PATH="/root/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome"
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# 🔹 Baixar manualmente o Chrome correto e validar
+RUN node -e "const p=require('puppeteer');p.createBrowserFetcher().download('127.0.6533.88').then(()=>console.log('✅ Chromium baixado com sucesso')).catch(console.error)"
 
 # Expor portas (Node + Flask)
 EXPOSE 8000 5005
 
-# Comando de inicialização principal
+# Comando principal
 CMD ["pm2-runtime", "mwsm.json"]
