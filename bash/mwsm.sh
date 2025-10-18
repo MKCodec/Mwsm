@@ -361,13 +361,21 @@ install() {
       -o Dpkg::Options::='--force-confdef' \
       -o Dpkg::Options::='--force-confold'" "Instalando pacotes extras..." install
   else
-    run_step "$SUDO apt update -y; $SUDO apt upgrade -y \
-      -o Dpkg::Options::='--force-confdef' \
-      -o Dpkg::Options::='--force-confold'" "Atualizando pacotes..." install
-    run_step "$SUDO apt-get install -y git wget curl jq build-essential libnss3-dev \
-      libgdk-pixbuf2.0-dev libgtk-3-dev libxss-dev libasound2 \
-      -o Dpkg::Options::='--force-confdef' \
-      -o Dpkg::Options::='--force-confold'" "Instalando dependências..." install
+run_step "$SUDO apt update -y; $SUDO apt upgrade -y \
+  -o Dpkg::Options::='--force-confdef' \
+  -o Dpkg::Options::='--force-confold'" "Atualizando pacotes..." install
+
+run_step '(
+  set -e
+  if ! '"$SUDO"' apt-get install -y git wget curl jq build-essential libnss3-dev \
+    libgdk-pixbuf2.0-dev libgtk-3-dev libxss-dev libasound2 \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" >/dev/null 2>&1; then
+      '"$SUDO"' apt-get install -y libgdk-pixbuf-xlib-2.0-dev \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" >/dev/null 2>&1
+  fi
+)' "Instalando dependências..." install
   fi
 
   # -------------------------
@@ -378,12 +386,12 @@ install() {
   # -------------------------
   # Node.js - Configurar repositório
   # -------------------------
-  run_step "$SUDO bash -c '
-    cd /root || exit 1
-    apt-get update -y
-    apt-get install -y curl gnupg ca-certificates --no-install-recommends
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || exit 1
-  '" "Configurando repositório Node.js" install
+run_step "$SUDO bash -c '
+  cd /root || exit 1
+  apt-get update -y
+  apt-get install -y curl gnupg ca-certificates lsb-release apt-transport-https --no-install-recommends
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || exit 1
+'" "Configurando repositório Node.js" install
 
   if [ "$NODE_REPO_FAILED" = true ]; then
     printf "❌ Instalando Node.js\n"
@@ -418,10 +426,12 @@ install() {
           'Restaurando pip' install
       fi
 
-      run_step "cd /tmp && \
-        PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-        $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel" \
-        'Atualizando Python' install
+run_step "cd /tmp && \
+  PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+  $SUDO python3 -m pip install --quiet --no-input --upgrade \
+  pip setuptools wheel --break-system-packages" \
+  'Atualizando Python' install
+
 
       # Instala libs Python dependendo da distro detectada
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
@@ -436,19 +446,21 @@ install() {
           'Instalando libs Python' install
 
       else
-        run_step "cd /tmp && \
-          PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-          $SUDO python3 -m pip install --quiet --no-input \
-          'flask==2.2.5' \
-          'sentence-transformers==2.2.2' \
-          'huggingface_hub==0.10.1'" \
-          'Instalando libs Python' install
+run_step "cd /tmp && \
+  PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+  $SUDO python3 -m pip install --quiet --no-input \
+  'flask==2.2.5' \
+  'sentence-transformers==2.2.2' \
+  'huggingface_hub==0.10.1' --break-system-packages" \
+  'Instalando libs Python' install
       fi
 
-      run_step "python3 -m pip show flask >/dev/null 2>&1 && \
-                python3 -m pip show sentence-transformers >/dev/null 2>&1 && \
-                python3 -m pip show huggingface_hub >/dev/null 2>&1" \
-        'Verificando integridade Python' install
+run_step "command -v pip3 >/dev/null 2>&1 && \
+  python3 -m pip show flask >/dev/null 2>&1 && \
+  python3 -m pip show sentence-transformers >/dev/null 2>&1 && \
+  python3 -m pip show huggingface_hub >/dev/null 2>&1" \
+  'Verificando integridade Python' install
+
 
       # -------------------------
       # Repositório Mwsm
@@ -468,10 +480,12 @@ install() {
       # -------------------------
       # Dependências Node
       # -------------------------
-      cd $BASE_DIR || return
-      run_step "node -v >/dev/null 2>&1" "Verificando instalação do Node.js" install
-      run_step "$SUDO npm cache clean --force" "Limpando cache NPM" install
-      run_step "npm config set registry https://registry.npmjs.org" "Configurando registro NPM" install
+cd $BASE_DIR || return
+run_step "node -v >/dev/null 2>&1" "Verificando instalação do Node.js" install
+run_step "$SUDO npm install -g npm@latest --quiet --no-progress" "Atualizando NPM" install
+run_step "$SUDO npm cache clean --force >/dev/null 2>&1" "Limpando cache NPM" install
+run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "Configurando registro NPM" install
+
 
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
         run_step "$SUDO npm install -g npm@latest node-gyp@latest" "Atualizando npm e node-gyp" install
@@ -509,20 +523,25 @@ install() {
       # -------------------------
       # Instalação e atualização do PM2
       # -------------------------
-      if command -v pm2 >/dev/null 2>&1; then
-        CURRENT_PM2_VERSION=$(pm2 -v | head -n1 | tr -d '[:space:]')
-        LATEST_PM2_VERSION=$(npm view pm2 version 2>/dev/null | tr -d '[:space:]')
-        if [[ -n "$LATEST_PM2_VERSION" && "$CURRENT_PM2_VERSION" != "$LATEST_PM2_VERSION" ]]; then
-          echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] Atualizando PM2 de $CURRENT_PM2_VERSION para $LATEST_PM2_VERSION" >>"$LOG_FILE"
-          run_step "$SUDO npm install -g pm2@$LATEST_PM2_VERSION --silent --no-audit --no-fund" "Atualizando PM2" install
-        else
-          echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] PM2 já está atualizado (v$CURRENT_PM2_VERSION)" >>"$LOG_FILE"
-          run_step "$SUDO pm2 update >/dev/null 2>&1 || true" "Sincronizando PM2" install
-        fi
-      else
-        run_step "$SUDO npm install -g pm2@latest --silent --no-audit --no-fund" "Instalando PM2" install
-        run_step "$SUDO timeout 15s pm2 update >/dev/null 2>&1 || { $SUDO pm2 kill >/dev/null 2>&1; rm -rf ~/.pm2; $SUDO pm2 update >/dev/null 2>&1 || true; }" "Inicializando PM2" install
-      fi
+if command -v pm2 >/dev/null 2>&1; then
+  CURRENT_PM2_VERSION=$(pm2 -v | head -n1 | tr -d '[:space:]')
+  LATEST_PM2_VERSION=$(npm view pm2 version 2>/dev/null | tr -d '[:space:]')
+
+  if [[ -n "$LATEST_PM2_VERSION" && "$CURRENT_PM2_VERSION" != "$LATEST_PM2_VERSION" ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] Atualizando PM2 de $CURRENT_PM2_VERSION para $LATEST_PM2_VERSION" >>"$LOG_FILE"
+    run_step "$SUDO npm install -g pm2@$LATEST_PM2_VERSION --silent --no-audit --no-fund" \
+      "Atualizando PM2" install
+  else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] PM2 já está atualizado (v$CURRENT_PM2_VERSION)" >>"$LOG_FILE"
+    run_step "$SUDO pm2 update >/dev/null 2>&1 || true" \
+      "Sincronizando PM2" install
+  fi
+else
+  run_step "$SUDO npm install -g pm2@latest --silent --no-audit --no-fund" \
+    "Instalando PM2" install
+  run_step "$SUDO timeout 15s pm2 update >/dev/null 2>&1 || { $SUDO pm2 kill >/dev/null 2>&1; rm -rf ~/.pm2; $SUDO pm2 update >/dev/null 2>&1 || true; }" \
+    "Inicializando PM2" install
+fi
 
       # -------------------------
       # Inicialização dos serviços
