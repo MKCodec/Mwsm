@@ -428,12 +428,10 @@ run_step "$SUDO bash -c '
 
 run_step "cd /tmp && \
   PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  $SUDO python3 -m pip install --quiet --no-input --upgrade \
-  pip setuptools wheel --break-system-packages" \
+  { $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel --break-system-packages 2>/dev/null || \
+    $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel 2>/dev/null; }" \
   'Atualizando Python' install
 
-
-      # Instala libs Python dependendo da distro detectada
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
         run_step "cd /tmp && \
           PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
@@ -444,7 +442,6 @@ run_step "cd /tmp && \
           'safetensors==0.3.1' \
           'huggingface_hub==0.10.1'" \
           'Instalando libs Python' install
-
       else
 run_step "cd /tmp && \
   PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
@@ -485,7 +482,6 @@ run_step "node -v >/dev/null 2>&1" "Verificando instalação do Node.js" install
 run_step "$SUDO npm install -g npm@latest --quiet --no-progress" "Atualizando NPM" install
 run_step "$SUDO npm cache clean --force >/dev/null 2>&1" "Limpando cache NPM" install
 run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "Configurando registro NPM" install
-
 
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
         run_step "$SUDO npm install -g npm@latest node-gyp@latest" "Atualizando npm e node-gyp" install
