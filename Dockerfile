@@ -1,5 +1,6 @@
 # =========================
 # 🧱 Etapa 1: Builder
+# (Instala dependências do sistema e constrói o ambiente de software)
 # =========================
 FROM node:20-bullseye AS builder
 
@@ -9,8 +10,10 @@ WORKDIR /var/api/Mwsm
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Sao_Paulo
 
-# Instalação de dependências do sistema necessárias para BUILD e RUNTIME
-# Não há problema em ter tudo aqui, mas idealmente seria dividido
+# -----------------------------------------------------------------
+# Instalação de dependências do sistema (Python, Git, e libs de runtime)
+# Executado apenas uma vez neste estágio.
+# -----------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     git python3 python3-pip python3-venv build-essential \
     curl wget unzip jq sqlite3 ca-certificates lsb-release xdg-utils \
@@ -22,16 +25,24 @@ RUN apt-get update && apt-get install -y \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone do Repositório e Instalação de Node.js
+# -----------------------------------------------------------------
+# Clone do Repositório (Sparse Checkout)
+# -----------------------------------------------------------------
 RUN git init && \
     git remote add origin https://github.com/MKCodec/Mwsm.git && \
     git config core.sparseCheckout true && \
     echo -e 'fonts/\nicon.png\nindex.html\njquery.js\nmwsm.db\nmwsm.js\nmwsm.json\nnodemon.json\npackage.json\nscript.js\nsocket.io.js\nstyle.css\nversion.json\nmwsm.py' > .git/info/sparse-checkout && \
     git pull origin main || git pull origin master
 
-RUN npm install --no-audit --no-fund # Removido --force
+# -----------------------------------------------------------------
+# Instalação de Node.js (removido --force para maior estabilidade)
+# -----------------------------------------------------------------
+RUN npm install --no-audit --no-fund
 
-# Criação do Virtual Environment Python
+# -----------------------------------------------------------------
+# Criação do Virtual Environment Python e Instalação de Pacotes
+# CORREÇÃO PRINCIPAL: Uso de --extra-index-url para PyTorch.
+# -----------------------------------------------------------------
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir \
@@ -40,10 +51,11 @@ RUN python3 -m venv /opt/venv && \
       huggingface_hub==0.10.1 \
       torch \
       torchvision \
-      --index-url https://download.pytorch.org/whl/cpu
+      --extra-index-url https://download.pytorch.org/whl/cpu
 
 # =========================
 # 📦 Etapa 2: Runtime
+# (Imagem final, menor e otimizada para execução)
 # =========================
 FROM node:20-bullseye
 
@@ -52,19 +64,25 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Sao_Paulo
 
-# ATENÇÃO: Se as dependências de sistema listadas no Builder forem estritamente
-# necessárias para o runtime (ex.: as libs X11), você precisará delas aqui.
-# No entanto, a base 'node:20-bullseye' já contém muitas libs básicas.
-# Removido apt-get install duplicado. 
-
-# Configuração do Timezone (melhor com ln -sf)
+# -----------------------------------------------------------------
+# Instalação MÍNIMA de dependências de sistema no runtime
+# NOTA: Como a etapa 'builder' instalou todas as libs de runtime,
+# esta etapa não precisa de um 'apt-get install' grande.
+# Apenas configuramos o timezone de forma robusta.
+# -----------------------------------------------------------------
 RUN ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
 
+# -----------------------------------------------------------------
 # Cópia dos Artefatos do Builder
+# -----------------------------------------------------------------
+# Copia o Ambiente Virtual Python
 COPY --from=builder /opt/venv /opt/venv
+# Copia o código-fonte e módulos node_modules
 COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
+# -----------------------------------------------------------------
 # Instalação do PM2 (Global)
+# -----------------------------------------------------------------
 RUN npm install -g pm2 --silent --no-audit --no-fund
 
 EXPOSE 8000 5005
