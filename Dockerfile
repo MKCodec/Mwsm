@@ -12,18 +12,9 @@ ENV TZ=America/Sao_Paulo
 
 # -----------------------------------------------------------------
 # Instalação de dependências do sistema (Python, Git, e libs de runtime)
-# CORREÇÃO APLICADA AQUI: Remoção de caracteres invisíveis e organização das linhas
+# CORREÇÃO DEFINITIVA: LINHA ÚNICA PARA EVITAR CARACTERES INVISÍVEIS (\u00a0)
 # -----------------------------------------------------------------
-RUN apt-get update && apt-get install -y \
-    git python3 python3-pip python3-venv build-essential \
-    curl wget unzip jq sqlite3 ca-certificates lsb-release xdg-utils \
-    fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 \
-    libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 \
-    libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 \
-    libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
-    libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
-    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git python3 python3-pip python3-venv build-essential curl wget unzip jq sqlite3 ca-certificates lsb-release xdg-utils fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------
 # 🎯 Clone Completo Raso
@@ -38,7 +29,7 @@ RUN npm install --no-audit --no-fund
 
 # -----------------------------------------------------------------
 # Criação do Virtual Environment Python e Instalação de Pacotes
-# CORREÇÃO: Removi espaços invisíveis nas linhas de continuação do PIP
+# CORREÇÃO DEFINITIVA: LINHAS DE INSTALAÇÃO DO PIP ALINHADAS PARA EVITAR CORRUPÇÃO
 # -----------------------------------------------------------------
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip && \
@@ -52,7 +43,6 @@ RUN python3 -m venv /opt/venv && \
 
 # =========================
 # 📦 Etapa 2: Runtime
-# (Imagem final, menor e otimizada para execução)
 # =========================
 FROM node:20-bullseye
 
