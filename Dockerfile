@@ -49,8 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl git jq xdg-utils build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Instalar Python runtime mínimo
-RUN apt-get install -y --no-install-recommends python3 python3-venv && \
+# Instalar Python runtime mínimo (com update)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv && \
     rm -rf /var/lib/apt/lists/*
 
 # Copiar ambiente Python e app do builder
@@ -67,7 +68,7 @@ RUN npm install -g pm2 --silent --no-audit --no-fund
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV CHROMIUM_FLAGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage"
 
-# Forçar Puppeteer a baixar o Chromium correto
+# Testar Puppeteer (sem crash)
 RUN node -e "try{require('puppeteer').launch({headless:'new',args:['--no-sandbox','--disable-setuid-sandbox']}).then(b=>b.close()).catch(e=>console.error(e))}catch(e){console.error(e)}"
 
 # Expor portas (Node + Flask)
