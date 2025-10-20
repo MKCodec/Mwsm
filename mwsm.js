@@ -1375,7 +1375,7 @@ async function askAI(question) {
 			let bestScore = 0;
 
 			if (aiMode === 0) {
-				console.log(`> ${appName} : Brain: Cloud | Relevance: 0.00`);
+				console.log(`> ${appName} : Brain: Cloud | Relevance: 0%`);
 				const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 				return resolve(aiAnswer);
 			}
@@ -1396,13 +1396,13 @@ async function askAI(question) {
 
 			// 🔹 Resposta local encontrada
 			if (bestMatch && bestScore >= threshold) {
-				console.log(`> ${appName} : Brain: Local | Relevance: ${bestScore.toFixed(2)}`);
+				console.log(`> ${appName} : Brain: Local | Relevance: ${(bestScore * 100).toFixed(0)}%`);
 				db.run("UPDATE inteligence SET usage_count = usage_count + 1 WHERE id = ?", [bestMatch.id]);
 				return resolve(bestMatch.answer);
 			}
 
 			// 🔹 Caso não tenha resposta local — vai para nuvem
-			console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
+			console.log(`> ${appName} : Brain: Cloud | Relevance: ${(bestScore * 100).toFixed(0)}%`);
 			const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 
 			// 🔸 Aprendizado local (modo 2)
@@ -1507,7 +1507,7 @@ async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, 
 				const aiAnswer =
 					response.data?.choices?.[0]?.message?.content?.trim() ||
 					"Desculpe, não consegui entender sua solicitação.";
-
+                aiAnswer = aiAnswer.replace(/◁think▷[\s\S]*?◁\/think▷/g, "").trim();
 				db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
 				db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
 
