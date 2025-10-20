@@ -1219,59 +1219,61 @@ async function WwjsVersion(GET) {
 // ==================================================
 
 async function getEmbedding(text) {
-    try {
-        if (!text) return null;
-        const mwsmHost = Debug('OPTIONS').mwsmhost;
-        const mwsmPort = Debug('OPTIONS').mwsmport;
+	try {
+		if (!text) return null;
+		const mwsmHost = Debug('OPTIONS').mwsmhost;
+		const mwsmPort = Debug('OPTIONS').mwsmport;
 
-        const localResp = await axios.post(
-            `http://${mwsmHost}:${mwsmPort}/embed`,
-            { text },
-            { timeout: 10000 }
-        );
+		const localResp = await axios.post(
+			`http://${mwsmHost}:${mwsmPort}/embed`, {
+				text
+			}, {
+				timeout: 10000
+			}
+		);
 
-        if (localResp.data?.embedding) return localResp.data.embedding;
-        throw new Error('No embedding returned');
-    } catch {
-        // 🔹 fallback determinístico (garante vetor estável)
-        return Array.from(text)
-            .map((ch, i) => ((ch.charCodeAt(0) + i * 13) % 255) / 255)
-            .slice(0, 256);
-    }
+		if (localResp.data?.embedding) return localResp.data.embedding;
+		throw new Error('No embedding returned');
+	} catch {
+		// 🔹 fallback determinístico (garante vetor estável)
+		return Array.from(text)
+			.map((ch, i) => ((ch.charCodeAt(0) + i * 13) % 255) / 255)
+			.slice(0, 256);
+	}
 }
 
 // ==================================================
 // 🕒 Timezone e Cumprimentos Dinâmicos
 // ==================================================
 async function getTimezoneByUF(uf) {
-    return new Promise((resolve) => {
-        db.get("SELECT timezone FROM localzone WHERE uf = ?", [uf], (err, row) => {
-            if (err || !row) return resolve("America/Sao_Paulo"); // padrão SP
-            resolve(row.timezone);
-        });
-    });
+	return new Promise((resolve) => {
+		db.get("SELECT timezone FROM localzone WHERE uf = ?", [uf], (err, row) => {
+			if (err || !row) return resolve("America/Sao_Paulo"); // padrão SP
+			resolve(row.timezone);
+		});
+	});
 }
 
 function getGreetingPeriod(timezone) {
-    try {
-        // Captura a hora local correta sem dupla conversão
-        const now = new Date();
-        const localHour = new Intl.DateTimeFormat("pt-BR", {
-            timeZone: timezone,
-            hour: "numeric",
-            hour12: false
-        }).format(now);
+	try {
+		// Captura a hora local correta sem dupla conversão
+		const now = new Date();
+		const localHour = new Intl.DateTimeFormat("pt-BR", {
+			timeZone: timezone,
+			hour: "numeric",
+			hour12: false
+		}).format(now);
 
-        const hour = parseInt(localHour, 10);
+		const hour = parseInt(localHour, 10);
 
-        if (hour >= 5 && hour < 12) return "bom dia";
-        if (hour >= 12 && hour < 18) return "boa tarde";
-        if (hour >= 18 && hour < 24) return "boa noite";
-        if (hour >= 0 && hour < 5) return "boa madrugada";
-    } catch (err) {
-        console.error("[ERRO] Falha ao determinar saudação:", err);
-        return "";
-    }
+		if (hour >= 5 && hour < 12) return "bom dia";
+		if (hour >= 12 && hour < 18) return "boa tarde";
+		if (hour >= 18 && hour < 24) return "boa noite";
+		if (hour >= 0 && hour < 5) return "boa madrugada";
+	} catch (err) {
+		console.error("[ERRO] Falha ao determinar saudação:", err);
+		return "";
+	}
 }
 
 
@@ -1279,280 +1281,305 @@ function getGreetingPeriod(timezone) {
 // 🔒 Filtro Temático (Palavras-chave no BD)
 // ==================================================
 async function isRelevantQuestion(text) {
-    return new Promise((resolve) => {
-        db.all("SELECT filter FROM keywords", [], (err, rows) => {
-            if (err) {
-                console.error("Keyword filter error:", err.message);
-                return resolve(true); // não bloqueia em erro
-            }
-            if (!rows || rows.length === 0) return resolve(true);
+	return new Promise((resolve) => {
+		db.all("SELECT filter FROM keywords", [], (err, rows) => {
+			if (err) {
+				console.error("Keyword filter error:", err.message);
+				return resolve(true); // não bloqueia em erro
+			}
+			if (!rows || rows.length === 0) return resolve(true);
 
-            const keywords = rows.map(r => (r.filter || "").toLowerCase().trim());
-            text = (text || "").toLowerCase().trim();
-            const found = keywords.some(k => text.includes(k));
-            resolve(found);
-        });
-    });
+			const keywords = rows.map(r => (r.filter || "").toLowerCase().trim());
+			text = (text || "").toLowerCase().trim();
+			const found = keywords.some(k => text.includes(k));
+			resolve(found);
+		});
+	});
 }
 
 // ==================================================
 // 🎯 Lógica Principal da IA
 // ==================================================
 async function askAI(question) {
-    return new Promise(async (resolve) => {
-        try {
-            const text = (question || "").toLowerCase().trim();
+	return new Promise(async (resolve) => {
+		try {
+			const text = (question || "").toLowerCase().trim();
 
-            // 🔹 1️⃣ Verifica se é um cumprimento antes do filtro
-            const isGreeting = await new Promise((resolveGreet) => {
-                db.all("SELECT word FROM greetings", [], (err, rows) => {
-                    if (err || !rows?.length) return resolveGreet(false);
-                    const greetings = rows.map(r => (r.word || "").toLowerCase());
-                    resolveGreet(greetings.some(g => text.includes(g)));
-                });
-            });
+			// 🔹 1️⃣ Verifica se é um cumprimento antes do filtro
+			const isGreeting = await new Promise((resolveGreet) => {
+				db.all("SELECT word FROM greetings", [], (err, rows) => {
+					if (err || !rows?.length) return resolveGreet(false);
+					const greetings = rows.map(r => (r.word || "").toLowerCase());
+					resolveGreet(greetings.some(g => text.includes(g)));
+				});
+			});
 
-            if (isGreeting) {
-                const uf = Debug('OPTIONS').timezone || 'SP';
-                const tz = await getTimezoneByUF(uf);
-                const turno = getGreetingPeriod(tz);
+			if (isGreeting) {
+				const uf = Debug('OPTIONS').timezone || 'SP';
+				const tz = await getTimezoneByUF(uf);
+				const turno = getGreetingPeriod(tz);
 
-                if (turno) {
-                    return resolve(`👋 Olá, ${turno}! Como posso te ajudar com sua conexão de internet?`);
-                } else {
-                    return resolve(`👋 Olá! Como posso te ajudar com sua conexão de internet?`);
-                }
-            }
+				if (turno) {
+					return resolve(`👋 Olá, ${turno}! Como posso te ajudar com sua conexão de internet?`);
+				} else {
+					return resolve(`👋 Olá! Como posso te ajudar com sua conexão de internet?`);
+				}
+			}
 
-            // 🔹 2️⃣ Se não for cumprimento, aplica o filtro temático
-            const isRelevant = await isRelevantQuestion(text);
-            if (!isRelevant) {
-                console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter → Ignored.`);
-                return resolve("⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.");
-            }
+			// 🔹 2️⃣ Se não for cumprimento, aplica o filtro temático
+			const isRelevant = await isRelevantQuestion(text);
+			if (!isRelevant) {
+				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter → Ignored.`);
+				return resolve("⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.");
+			}
 
-            // 🔹 3️⃣ A partir daqui segue o fluxo normal da IA
-            const aiMode = parseInt(Debug('OPTIONS').aimode);
-            const apiKey = Debug('OPTIONS').keygen;
-            const Engine = Debug('OPTIONS').engine;
-            const threshold = parseFloat(Debug('OPTIONS').threshold);
-            const systemPrompt = Debug('OPTIONS').prompt;
-            const aiTimeout = parseInt(Debug('OPTIONS').aitimeout);
-            const appName = Debug('OPTIONS').appname;
+			// 🔹 3️⃣ A partir daqui segue o fluxo normal da IA
+			const aiMode = parseInt(Debug('OPTIONS').aimode);
+			const apiKey = Debug('OPTIONS').keygen;
+			var Engine = Debug('OPTIONS').engine;
+			const threshold = parseFloat(Debug('OPTIONS').threshold);
+			const systemPrompt = Debug('OPTIONS').prompt;
+			const aiTimeout = parseInt(Debug('OPTIONS').aitimeout);
+			const appName = Debug('OPTIONS').appname;
 
-            if (!apiKey) return resolve("⚠️ IA não configurada.");
+			if (!apiKey) return resolve("⚠️ IA não configurada.");
 
-            const engineRow = await Debug("ENGINE", "*", "DIRECT", Engine);
-            const Module = engineRow?.module || null;
-            const Level = parseInt(engineRow?.level || 0);
+			if (Engine.toLowerCase() === 'freerouter') {
+				const Levels = Debug('ENGINE', '*', 'ALL').filter(item => item.level === 0);
+				const ActiveModel = Levels.find(item => item.active === 1);
 
-            if (!Module) return resolve("⚠️ Indisponível no momento.");
+				if (ActiveModel) {
+					Regedit = ActiveModel;
+				} else if (Levels.length > 0) {
+					const randomIndex = Math.floor(Math.random() * Levels.length);
+					Regedit = Levels[randomIndex];
+				}
 
-            const qEmbedding = await getEmbedding(question);
-            let bestMatch = null;
-            let bestScore = 0;
+				if (Regedit) {
+					Engine = Regedit.title;
+					Module = Regedit.module;
+					Level = parseInt(Regedit.level);
+				}
+			} else {
+				Regedit = await Debug("ENGINE", "*", "DIRECT", Engine);
+				if (Regedit) {
+					Engine = Regedit.title;
+					Module = Regedit.module;
+					Level = parseInt(Regedit.level);
+				}
+			}
+			if (!Module) return resolve("⚠️ Indisponível no momento.");
 
-            if (aiMode === 0) {
-                console.log(`> ${appName} : Brain: Cloud | Relevance: 0.00`);
-                const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
-                return resolve(aiAnswer);
-            }
+			const qEmbedding = await getEmbedding(question);
+			let bestMatch = null;
+			let bestScore = 0;
 
-            // 🔸 Busca local
-            const rows = await Debug('INTELIGENCE', '*', 'ALL');
-            for (const r of rows) {
-                if (!r.embedding) continue;
-                try {
-                    const emb = JSON.parse(r.embedding);
-                    const score = cosineSimilarity(emb, qEmbedding);
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestMatch = r;
-                    }
-                } catch {}
-            }
+			if (aiMode === 0) {
+				console.log(`> ${appName} : Brain: Cloud | Relevance: 0.00`);
+				const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
+				return resolve(aiAnswer);
+			}
 
-            // 🔹 Resposta local encontrada
-            if (bestMatch && bestScore >= threshold) {
-                console.log(`> ${appName} : Brain: Local | Relevance: ${bestScore.toFixed(2)}`);
-                db.run("UPDATE inteligence SET usage_count = usage_count + 1 WHERE id = ?", [bestMatch.id]);
-                return resolve(bestMatch.answer);
-            }
+			// 🔸 Busca local
+			const rows = await Debug('INTELIGENCE', '*', 'ALL');
+			for (const r of rows) {
+				if (!r.embedding) continue;
+				try {
+					const emb = JSON.parse(r.embedding);
+					const score = cosineSimilarity(emb, qEmbedding);
+					if (score > bestScore) {
+						bestScore = score;
+						bestMatch = r;
+					}
+				} catch {}
+			}
 
-            // 🔹 Caso não tenha resposta local — vai para nuvem
-            console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
-            const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
+			// 🔹 Resposta local encontrada
+			if (bestMatch && bestScore >= threshold) {
+				console.log(`> ${appName} : Brain: Local | Relevance: ${bestScore.toFixed(2)}`);
+				db.run("UPDATE inteligence SET usage_count = usage_count + 1 WHERE id = ?", [bestMatch.id]);
+				return resolve(bestMatch.answer);
+			}
 
-            // 🔸 Aprendizado local (modo 2)
-            if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("⚠")) {
-                try {
-                    await enforceKnowledgeLimit();
-                    const _embedding = await getEmbedding(question);
-                    const embeddingStr = _embedding ? JSON.stringify(_embedding) : null;
+			// 🔹 Caso não tenha resposta local — vai para nuvem
+			console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
+			const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 
-                    db.serialize(() => {
-                        db.get("SELECT id FROM inteligence WHERE question = ?", [question], (err, row) => {
-                            if (err) return console.error("DB check error:", err.message);
+			// 🔸 Aprendizado local (modo 2)
+			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("⚠")) {
+				try {
+					await enforceKnowledgeLimit();
+					const _embedding = await getEmbedding(question);
+					const embeddingStr = _embedding ? JSON.stringify(_embedding) : null;
 
-                            const sql = row
-                                ? "UPDATE inteligence SET answer=?, embedding=?, source=?, usage_count=usage_count+1 WHERE id=?"
-                                : "INSERT INTO inteligence (question, answer, embedding, source, usage_count) VALUES (?, ?, ?, ?, 1)";
+					db.serialize(() => {
+						db.get("SELECT id FROM inteligence WHERE question = ?", [question], (err, row) => {
+							if (err) return console.error("DB check error:", err.message);
 
-                            const params = row
-                                ? [aiAnswer, embeddingStr, "local", row.id]
-                                : [question, aiAnswer, embeddingStr, "local"];
+							const sql = row ?
+								"UPDATE inteligence SET answer=?, embedding=?, source=?, usage_count=usage_count+1 WHERE id=?" :
+								"INSERT INTO inteligence (question, answer, embedding, source, usage_count) VALUES (?, ?, ?, ?, 1)";
 
-                            db.run(sql, params, (e) => e && console.error("DB write error:", e.message));
-                        });
-                    });
-                } catch (e) {
-                    console.error("Embedding generation failed:", e?.message || e);
-                }
-            }
+							const params = row ?
+								[aiAnswer, embeddingStr, "local", row.id] :
+								[question, aiAnswer, embeddingStr, "local"];
 
-            return resolve(aiAnswer);
-        } catch (err) {
-            console.error("IA error:", err.message || err);
-            return resolve("⚠️ Não consegui acessar a inteligência artificial no momento.");
-        }
-    });
+							db.run(sql, params, (e) => e && console.error("DB write error:", e.message));
+						});
+					});
+				} catch (e) {
+					console.error("Embedding generation failed:", e?.message || e);
+				}
+			}
+
+			return resolve(aiAnswer);
+		} catch (err) {
+			console.error("IA error:", err.message || err);
+			return resolve("⚠️ Não consegui acessar a inteligência artificial no momento.");
+		}
+	});
 }
 
 // ==================================================
 // 🌐 Comunicação com API (OpenRouter) + Limite de Tentativas
 // ==================================================
 async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level = 0) {
-    const tried = [];
-    try {
-        let variants = [];
+	const tried = [];
+	try {
+		let variants = [];
 
-        if (Engine.toLowerCase() === "freerouter") {
-            variants = await new Promise((resolve) => {
-                db.all("SELECT * FROM engine WHERE level = 0 ORDER BY active DESC, id ASC", [], (err, rows) => {
-                    if (err) return resolve([]);
-                    resolve(rows);
-                });
-            });
-        } else {
-            variants = await new Promise((resolve) => {
-                db.all("SELECT * FROM engine WHERE title = ? AND level = ? ORDER BY active DESC, id ASC", [Engine, Level], (err, rows) => {
-                    if (err) return resolve([]);
-                    resolve(rows);
-                });
-            });
-        }
+		if (Engine.toLowerCase() === "freerouter") {
+			variants = await new Promise((resolve) => {
+				db.all("SELECT * FROM engine WHERE level = 0 ORDER BY active DESC, id ASC", [], (err, rows) => {
+					if (err) return resolve([]);
+					resolve(rows);
+				});
+			});
+		} else {
+			variants = await new Promise((resolve) => {
+				db.all("SELECT * FROM engine WHERE title = ? AND level = ? ORDER BY active DESC, id ASC", [Engine, Level], (err, rows) => {
+					if (err) return resolve([]);
+					resolve(rows);
+				});
+			});
+		}
 
-        if (!variants.length) throw new Error("⚠️ Erro ao buscar resposta da IA online.");
+		if (!variants.length) throw new Error("⚠️ Erro ao buscar resposta da IA online.");
 
-        const activeVariant = variants.find(v => v.active === 1);
-        const orderedVariants = activeVariant
-            ? [activeVariant, ...variants.filter(v => v.id !== activeVariant.id)]
-            : variants;
+		const activeVariant = variants.find(v => v.active === 1);
+		const orderedVariants = activeVariant ?
+			[activeVariant, ...variants.filter(v => v.id !== activeVariant.id)] :
+			variants;
 
-        const maxAttempts = parseInt(Debug('OPTIONS').aimaxattempts) || 0;
-        let attempts = 0;
+		const maxAttempts = parseInt(Debug('OPTIONS').aimaxattempts) || 0;
+		let attempts = 0;
 
-        for (const variant of orderedVariants) {
-            if (maxAttempts && attempts >= maxAttempts) {
-                console.log(`> ${Debug('OPTIONS').appname} : Brain: Max Attempts (${maxAttempts}) reached.`);
-                break;
-            }
-            attempts++;
+		for (const variant of orderedVariants) {
+			if (maxAttempts && attempts >= maxAttempts) {
+				console.log(`> ${Debug('OPTIONS').appname} : Brain: Max Attempts (${maxAttempts}) reached.`);
+				break;
+			}
+			attempts++;
 
-            tried.push(variant.module);
-            try {
-                const response = await axios.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    {
-                        model: variant.module,
-                        messages: [
-                            { role: "system", content: systemPrompt },
-                            { role: "user", content: question }
-                        ]
-                    },
-                    {
-                        headers: {
-                            Authorization: `Bearer ${apiKey}`,
-                            "Content-Type": "application/json"
-                        },
-                        timeout: aiTimeout
-                    }
-                );
+			tried.push(variant.module);
+			try {
+				const response = await axios.post(
+					"https://openrouter.ai/api/v1/chat/completions", {
+						model: variant.module,
+						messages: [{
+								role: "system",
+								content: systemPrompt
+							},
+							{
+								role: "user",
+								content: question
+							}
+						]
+					}, {
+						headers: {
+							Authorization: `Bearer ${apiKey}`,
+							"Content-Type": "application/json"
+						},
+						timeout: aiTimeout
+					}
+				);
 
-                const aiAnswer =
-                    response.data?.choices?.[0]?.message?.content?.trim() ||
-                    "Desculpe, não consegui entender sua solicitação.";
+				const aiAnswer =
+					response.data?.choices?.[0]?.message?.content?.trim() ||
+					"Desculpe, não consegui entender sua solicitação.";
 
-                db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
-                db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
+				db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
+				db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
 
-                console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → ATIVA`);
-                return aiAnswer.replace(/\s+/g, " ").trim();
-            } catch (err) {
-                console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → INATIVA`);
-                db.run("UPDATE engine SET active = 0 WHERE id = ?", [variant.id]);
-                continue;
-            }
-        }
+				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → ATIVA`);
+				return aiAnswer.replace(/\s+/g, " ").trim();
+			} catch (err) {
+				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → INATIVA`);
+				db.run("UPDATE engine SET active = 0 WHERE id = ?", [variant.id]);
+				continue;
+			}
+		}
 
-        return "⚠️ Erro ao buscar resposta da IA online.";
-    } catch {
-        return "⚠️ Erro ao buscar resposta da IA online.";
-    }
+		return "⚠️ Erro ao buscar resposta da IA online.";
+	} catch {
+		return "⚠️ Erro ao buscar resposta da IA online.";
+	}
 }
 
 // ==================================================
 // 📊 Similaridade Vetorial
 // ==================================================
 function cosineSimilarity(vecA, vecB) {
-    if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
-    let dot = 0, normA = 0, normB = 0;
-    for (let i = 0; i < vecA.length; i++) {
-        dot += vecA[i] * vecB[i];
-        normA += vecA[i] * vecA[i];
-        normB += vecB[i] * vecB[i];
-    }
-    return normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;
+	if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+	let dot = 0,
+		normA = 0,
+		normB = 0;
+	for (let i = 0; i < vecA.length; i++) {
+		dot += vecA[i] * vecB[i];
+		normA += vecA[i] * vecA[i];
+		normB += vecB[i] * vecB[i];
+	}
+	return normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;
 }
 
 // ==================================================
 // 🧹 Limpeza Dinâmica e Inteligente do Conhecimento
 // ==================================================
 async function enforceKnowledgeLimit() {
-    try {
-        const maxKnowledge = parseInt(Debug("OPTIONS").maxknowledge) || 1000;
-        if (!maxKnowledge || maxKnowledge < 100) return;
+	try {
+		const maxKnowledge = parseInt(Debug("OPTIONS").maxknowledge) || 1000;
+		if (!maxKnowledge || maxKnowledge < 100) return;
 
-        db.all("SELECT COUNT(*) as total FROM inteligence", async (err, rows) => {
-            if (err) return console.error("DB count error:", err.message);
-            const total = rows[0]?.total || 0;
-            if (total <= maxKnowledge) return;
+		db.all("SELECT COUNT(*) as total FROM inteligence", async (err, rows) => {
+			if (err) return console.error("DB count error:", err.message);
+			const total = rows[0]?.total || 0;
+			if (total <= maxKnowledge) return;
 
-            const excess = total - maxKnowledge;
-            db.run(
-                `DELETE FROM inteligence
+			const excess = total - maxKnowledge;
+			db.run(
+				`DELETE FROM inteligence
                  WHERE id IN (
                      SELECT id FROM inteligence
                      ORDER BY usage_count ASC, id ASC
                      LIMIT ?
                  )`,
-                [excess],
-                function (delErr) {
-                    if (delErr) console.error("Cleanup error:", delErr.message);
-                    else console.log(`✅ ${this.changes} registros antigos removidos.`);
-                }
-            );
-        });
-    } catch (err) {
-        console.error("Erro no enforceKnowledgeLimit:", err.message);
-    }
+				[excess],
+				function(delErr) {
+					if (delErr) console.error("Cleanup error:", delErr.message);
+					else console.log(`✅ ${this.changes} registros antigos removidos.`);
+				}
+			);
+		});
+	} catch (err) {
+		console.error("Erro no enforceKnowledgeLimit:", err.message);
+	}
 }
 
 // ==================================================
 // 🔹 Embedding Local (Backup Seguro)
 // ==================================================
 async function getLocalEmbedding(text) {
-    return Array.from(text).map((c, i) => ((c.charCodeAt(0) + i * 7) % 255) / 255);
+	return Array.from(text).map((c, i) => ((c.charCodeAt(0) + i * 7) % 255) / 255);
 }
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -4651,154 +4678,158 @@ const Build = async (SET) => {
 // WhatsApp Bot
 client.on('message', async msg => {
 
-// ==================================================
-// 🤖 Bot Menu e Controle Inteligente de IA
-// ==================================================
-const lastRequestTimes = new Map();
-let lastGlobalRequest = 0;
-let globalQueue = Promise.resolve();
+	// ==================================================
+	// 🤖 Bot Menu e Controle Inteligente de IA
+	// ==================================================
+	const lastRequestTimes = new Map();
+	let lastGlobalRequest = 0;
+	let globalQueue = Promise.resolve();
 
-if (activeMenus.has(msg.from)) {
-    if (activeSupportIA.has(msg.from)) {
-        try {
-            const _iaExit = (msg.body || '').toString().trim().toLowerCase();
+	if (activeMenus.has(msg.from)) {
+		if (activeSupportIA.has(msg.from)) {
+			try {
+				const _iaExit = (msg.body || '').toString().trim().toLowerCase();
 
-            // 🔹 Encerrar atendimento
-            if (["0", "sair", "tchau", "tchal"].includes(_iaExit)) {
-                activeSupportIA.delete(msg.from);
-                activeMenus.delete(msg.from);
-                await client.sendMessage(msg.from, "✅ Atendimento encerrado. Obrigado pelo contato!");
-                return;
-            }
+				// 🔹 Encerrar atendimento
+				if (["0", "sair", "tchau", "tchal"].includes(_iaExit)) {
+					activeSupportIA.delete(msg.from);
+					activeMenus.delete(msg.from);
+					await client.sendMessage(msg.from, "✅ Atendimento encerrado. Obrigado pelo contato!");
+					return;
+				}
 
-            // 🔹 Voltar ao menu principal
-            if (_iaExit === "menu") {
-                activeSupportIA.delete(msg.from);
-                activeMenus.set(msg.from, true);
-                await client.sendMessage(
-                    msg.from,
-                    '📋 *Menu Principal*\n\n' +
-                    '1️⃣ Boleto\n' +
-                    '2️⃣ Suporte\n' +
-                    '0️⃣ Encerrar\n\n' +
-                    '👉 Responda com o número da opção desejada.'
-                );
-                return;
-            }
-        } catch (e) {
-            console.error('IA exit handler error:', e?.message || e);
-        }
+				// 🔹 Voltar ao menu principal
+				if (_iaExit === "menu") {
+					activeSupportIA.delete(msg.from);
+					activeMenus.set(msg.from, true);
+					await client.sendMessage(
+						msg.from,
+						'📋 *Menu Principal*\n\n' +
+						'1️⃣ Boleto\n' +
+						'2️⃣ Suporte\n' +
+						'0️⃣ Encerrar\n\n' +
+						'👉 Responda com o número da opção desejada.'
+					);
+					return;
+				}
+			} catch (e) {
+				console.error('IA exit handler error:', e?.message || e);
+			}
 
-        try {
-            const chat = await msg.getChat();
-            const Engine = Debug('OPTIONS').engine;
-            const Level = parseInt(Debug("ENGINE", "*", "DIRECT", Engine).level || 0);
-            const perUserDelay = parseInt(Debug('OPTIONS').airequestdelay) || 3000;
-            const globalDelay = parseInt(Debug('OPTIONS').aiglobaldelay) || 1000;
+			try {
+				const chat = await msg.getChat();
+				const Engine = Debug('OPTIONS').engine;
+				const Level = parseInt(Debug("ENGINE", "*", "DIRECT", Engine).level || 0);
+				const perUserDelay = parseInt(Debug('OPTIONS').airequestdelay) || 3000;
+				const globalDelay = parseInt(Debug('OPTIONS').aiglobaldelay) || 1000;
 
-            const now = Date.now();
-            const lastUser = lastRequestTimes.get(msg.from) || 0;
-            const sinceUser = now - lastUser;
-            const sinceGlobal = now - lastGlobalRequest;
-            const waitUser = Math.max(0, perUserDelay - sinceUser);
-            const waitGlobal = Math.max(0, globalDelay - sinceGlobal);
-            const totalWait = Math.max(waitUser, waitGlobal);
+				const now = Date.now();
+				const lastUser = lastRequestTimes.get(msg.from) || 0;
+				const sinceUser = now - lastUser;
+				const sinceGlobal = now - lastGlobalRequest;
+				const waitUser = Math.max(0, perUserDelay - sinceUser);
+				const waitGlobal = Math.max(0, globalDelay - sinceGlobal);
+				const totalWait = Math.max(waitUser, waitGlobal);
 
-            // ==================================================
-            // 🔹 Modo Free — com fila e controle global
-            // ==================================================
-            if (Level === 0) {
-                globalQueue = globalQueue.then(async () => {
-                    try {
-                        if (totalWait > 0) {
-                            const typingInterval = setInterval(async () => {
-                                try { await chat.sendStateTyping(); } catch {}
-                            }, 4000);
+				// ==================================================
+				// 🔹 Modo Free — com fila e controle global
+				// ==================================================
+				if (Level === 0) {
+					globalQueue = globalQueue.then(async () => {
+						try {
+							if (totalWait > 0) {
+								const typingInterval = setInterval(async () => {
+									try {
+										await chat.sendStateTyping();
+									} catch {}
+								}, 4000);
 
-                            await new Promise(r => setTimeout(r, totalWait));
-                            clearInterval(typingInterval);
-                            try { await chat.clearState(); } catch {}
-                        }
+								await new Promise(r => setTimeout(r, totalWait));
+								clearInterval(typingInterval);
+								try {
+									await chat.clearState();
+								} catch {}
+							}
 
-                        lastRequestTimes.set(msg.from, Date.now());
-                        lastGlobalRequest = Date.now();
+							lastRequestTimes.set(msg.from, Date.now());
+							lastGlobalRequest = Date.now();
 
-                        const tLevel = parseInt(Debug('OPTIONS').typingspeed);
-                        const multiplier = 1 + (5 - tLevel) * 0.25;
-                        const baseTime = 800 * multiplier;
-                        const extraPerChar = 25 * multiplier;
-                        const maxTime = 4000 * multiplier;
-                        const estimatedDelay = Math.min(baseTime + msg.body.length * extraPerChar, maxTime);
+							const tLevel = parseInt(Debug('OPTIONS').typingspeed);
+							const multiplier = 1 + (5 - tLevel) * 0.25;
+							const baseTime = 800 * multiplier;
+							const extraPerChar = 25 * multiplier;
+							const maxTime = 4000 * multiplier;
+							const estimatedDelay = Math.min(baseTime + msg.body.length * extraPerChar, maxTime);
 
-                        await chat.sendStateTyping();
-                        await new Promise(resolve => setTimeout(resolve, estimatedDelay));
-                        await chat.clearState();
+							await chat.sendStateTyping();
+							await new Promise(resolve => setTimeout(resolve, estimatedDelay));
+							await chat.clearState();
 
-                        const reply = await askAI(msg.body);
-                        await client.sendMessage(msg.from, reply);
-                    } catch (err) {
-                        console.error("Erro ao processar IA (free):", err.message);
-                        try {
-                            const reply = await askAI(msg.body);
-                            await client.sendMessage(msg.from, reply);
-                        } catch (e2) {
-                            console.error("Erro secundário:", e2.message);
-                        }
-                    }
-                }).catch(e => console.error("Erro na fila global:", e.message));
-            } 
-            
-            // ==================================================
-            // 🔹 Modo Premium — Resposta direta (sem fila)
-            // ==================================================
-            else {
-                const tLevel = parseInt(Debug('OPTIONS').typingspeed);
-                const multiplier = 1 + (5 - tLevel) * 0.25;
-                const baseTime = 800 * multiplier;
-                const extraPerChar = 25 * multiplier;
-                const maxTime = 4000 * multiplier;
-                const estimatedDelay = Math.min(baseTime + msg.body.length * extraPerChar, maxTime);
+							const reply = await askAI(msg.body);
+							await client.sendMessage(msg.from, reply);
+						} catch (err) {
+							console.error("Erro ao processar IA (free):", err.message);
+							try {
+								const reply = await askAI(msg.body);
+								await client.sendMessage(msg.from, reply);
+							} catch (e2) {
+								console.error("Erro secundário:", e2.message);
+							}
+						}
+					}).catch(e => console.error("Erro na fila global:", e.message));
+				}
 
-                await chat.sendStateTyping();
-                await new Promise(r => setTimeout(r, estimatedDelay));
-                await chat.clearState();
+				// ==================================================
+				// 🔹 Modo Premium — Resposta direta (sem fila)
+				// ==================================================
+				else {
+					const tLevel = parseInt(Debug('OPTIONS').typingspeed);
+					const multiplier = 1 + (5 - tLevel) * 0.25;
+					const baseTime = 800 * multiplier;
+					const extraPerChar = 25 * multiplier;
+					const maxTime = 4000 * multiplier;
+					const estimatedDelay = Math.min(baseTime + msg.body.length * extraPerChar, maxTime);
 
-                const reply = await askAI(msg.body);
-                await client.sendMessage(msg.from, reply);
-            }
+					await chat.sendStateTyping();
+					await new Promise(r => setTimeout(r, estimatedDelay));
+					await chat.clearState();
 
-        } catch (err) {
-            console.error("Erro ao simular digitando:", err.message);
-            try {
-                const reply = await askAI(msg.body);
-                await client.sendMessage(msg.from, reply);
-            } catch (e2) {
-                console.error("Erro no fallback de IA:", e2.message);
-            }
-        }
-        return;
-    }
+					const reply = await askAI(msg.body);
+					await client.sendMessage(msg.from, reply);
+				}
 
-    // ==================================================
-    // 📋 Menu principal
-    // ==================================================
-    if (msg.body.startsWith('1')) {
-        await client.sendMessage(msg.from, '🔗 Aqui está o link do seu boleto: https://seudominio.com/boleto');
-        return;
-    }
+			} catch (err) {
+				console.error("Erro ao simular digitando:", err.message);
+				try {
+					const reply = await askAI(msg.body);
+					await client.sendMessage(msg.from, reply);
+				} catch (e2) {
+					console.error("Erro no fallback de IA:", e2.message);
+				}
+			}
+			return;
+		}
 
-    if (msg.body.startsWith('2')) {
-        await client.sendMessage(msg.from, '🤖 Você está agora em atendimento de suporte com IA. Envie sua dúvida.');
-        activeSupportIA.set(msg.from, true);
-        return;
-    }
+		// ==================================================
+		// 📋 Menu principal
+		// ==================================================
+		if (msg.body.startsWith('1')) {
+			await client.sendMessage(msg.from, '🔗 Aqui está o link do seu boleto: https://seudominio.com/boleto');
+			return;
+		}
 
-    if (msg.body.startsWith('0')) {
-        await client.sendMessage(msg.from, '✅ Atendimento encerrado. Obrigado pelo contato!');
-        activeMenus.delete(msg.from);
-        return;
-    }
-}
+		if (msg.body.startsWith('2')) {
+			await client.sendMessage(msg.from, '🤖 Você está agora em atendimento de suporte com IA. Envie sua dúvida.');
+			activeSupportIA.set(msg.from, true);
+			return;
+		}
+
+		if (msg.body.startsWith('0')) {
+			await client.sendMessage(msg.from, '✅ Atendimento encerrado. Obrigado pelo contato!');
+			activeMenus.delete(msg.from);
+			return;
+		}
+	}
 
 	if (msg.body.toLowerCase() === 'menu') {
 		activeMenus.set(msg.from, true);
