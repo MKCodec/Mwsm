@@ -1,7 +1,7 @@
 # =========================
 # 🧱 Etapa 1: Builder
 # =========================
-FROM node:20-bullseye AS builder
+FROM node:20-trixie AS builder
 
 WORKDIR /var/api/Mwsm
 
@@ -15,7 +15,7 @@ ENV TZ=America/Sao_Paulo
 RUN apt-get update && apt-get install -y \
   git python3 python3-pip python3-venv build-essential curl wget unzip jq sqlite3 ca-certificates lsb-release xdg-utils fonts-liberation \
   libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
-  libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
+  libgbm1 libgcc-s1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
   libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -33,7 +33,7 @@ RUN npm install --no-audit --no-fund
 # Criação do ambiente virtual Python e instalação dos pacotes
 # -----------------------------------------------------------------
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --upgrade pip && \
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
     /opt/venv/bin/pip install --no-cache-dir \
       flask==2.2.5 \
       sentence-transformers==2.2.2 \
@@ -45,7 +45,7 @@ RUN python3 -m venv /opt/venv && \
 # =========================
 # 📦 Etapa 2: Runtime
 # =========================
-FROM node:20-bullseye
+FROM node:20-trixie
 
 WORKDIR /var/api/Mwsm
 ENV PATH="/opt/venv/bin:$PATH"
@@ -59,7 +59,7 @@ ENV TZ=America/Sao_Paulo
 RUN apt-get update && apt-get install -y --no-install-recommends \
   python3 python3-venv ca-certificates fonts-liberation \
   libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
-  libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
+  libgbm1 libgcc-s1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
   libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils \
   && ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime \
   && rm -rf /var/lib/apt/lists/*
