@@ -1,23 +1,36 @@
 # =========================
 # 🧱 Etapa 1: Builder
 # =========================
-FROM node:20-bullseye AS builder
+FROM node:20-bookworm AS builder
 
 WORKDIR /var/api/Mwsm
 
-# Configurações básicas (para o builder)
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Sao_Paulo
 
 # -----------------------------------------------------------------
-# Instalação de dependências do sistema (Python, Git, e libs de runtime)
+# Instalação de dependências completas para build e compatibilidade
 # -----------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
-  git python3 python3-pip python3-venv build-essential curl wget unzip jq sqlite3 ca-certificates lsb-release xdg-utils fonts-liberation \
-  libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
-  libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
-  libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+  git python3 python3-pip python3-venv python3-dev \
+  build-essential pkg-config curl wget unzip jq sqlite3 \
+  ca-certificates openssl lsb-release xdg-utils dbus \
+  fontconfig fonts-dejavu fonts-liberation locales \
+  libgomp1 libopenblas-dev liblapack-dev \
+  libxshmfence1 libgbm1 libxkbcommon0 libdrm2 \
+  libasound2 libpulse0 \
+  libcairo2 libpango1.0-0 libpangocairo-1.0-0 \
+  libappindicator3-1 libatk-bridge2.0-0 libatk1.0-0 \
+  libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
+  libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
+  libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
+  libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 \
+  libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+  && locale-gen pt_BR.UTF-8 \
   && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=pt_BR.UTF-8
+ENV LC_ALL=pt_BR.UTF-8
 
 # -----------------------------------------------------------------
 # 🎯 Clone Completo Raso do repositório
@@ -38,31 +51,42 @@ RUN python3 -m venv /opt/venv && \
       flask==2.2.5 \
       sentence-transformers==2.2.2 \
       huggingface_hub==0.10.1 \
-      torch \
-      torchvision \
+      torch torchvision \
       --extra-index-url https://download.pytorch.org/whl/cpu
 
+
 # =========================
-# 📦 Etapa 2: Runtime
+# 🚀 Etapa 2: Runtime
 # =========================
-FROM node:20-bullseye
+FROM node:20-bookworm
 
 WORKDIR /var/api/Mwsm
-ENV PATH="/opt/venv/bin:$PATH"
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Sao_Paulo
+ENV LANG=pt_BR.UTF-8
+ENV LC_ALL=pt_BR.UTF-8
+ENV PATH="/opt/venv/bin:$PATH"
 
 # -----------------------------------------------------------------
-# Instalação mínima de dependências no runtime
-# Inclui bibliotecas essenciais para Puppeteer / Chromium headless
+# Instalação mínima porém completa de dependências do runtime
 # -----------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  python3 python3-venv ca-certificates fonts-liberation \
-  libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
-  libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
-  libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils \
-  && ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime \
-  && rm -rf /var/lib/apt/lists/*
+  python3 python3-venv sqlite3 ca-certificates openssl \
+  fonts-dejavu fonts-liberation fontconfig locales \
+  libgomp1 libopenblas-dev liblapack-dev \
+  libxshmfence1 libgbm1 libxkbcommon0 libdrm2 \
+  libasound2 libpulse0 \
+  libcairo2 libpango1.0-0 libpangocairo-1.0-0 \
+  libappindicator3-1 libatk-bridge2.0-0 libatk1.0-0 \
+  libc6 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
+  libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
+  libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
+  libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 \
+  libxi6 libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils dbus \
+  && locale-gen pt_BR.UTF-8 && \
+  ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime && \
+  rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------
 # Copiar ambiente virtual e código-fonte do builder
@@ -71,11 +95,13 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
 # -----------------------------------------------------------------
-# Instalação do PM2 (global)
+# Instalação do PM2 global
 # -----------------------------------------------------------------
 RUN npm install -g pm2 --silent --no-audit --no-fund
 
-# Expor as portas utilizadas
+# -----------------------------------------------------------------
+# Expor portas utilizadas
+# -----------------------------------------------------------------
 EXPOSE 8000 5005
 
 # -----------------------------------------------------------------
