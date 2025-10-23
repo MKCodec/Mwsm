@@ -7110,7 +7110,7 @@ fieldset[disabled] .btn-link:focus {
 #wwjs {
     font-size: 20px;
     color: #FFF;
-    transition: color 0.5s ease; /* animação de 0.5s ao mudar cor */
+    transition: color 0.5s ease; /* anima  o de 0.5s ao mudar cor */
 }
 
 .ui-tooltip {
@@ -8741,4 +8741,8 @@ option {
 .FireX {
     cursor: pointer;
     text-transform: capitalize;
+}
+#qrcode{
+    width: 276px;
+    height: 276px;
 }

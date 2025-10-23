@@ -1213,7 +1213,6 @@ async function WwjsVersion(GET) {
 }
 
 
-
 // ==================================================
 // 🧠 Inteligência Artificial
 // ==================================================
@@ -1235,7 +1234,6 @@ async function getEmbedding(text) {
 		if (localResp.data?.embedding) return localResp.data.embedding;
 		throw new Error('No embedding returned');
 	} catch {
-		// 🔹 fallback determinístico (garante vetor estável)
 		return Array.from(text)
 			.map((ch, i) => ((ch.charCodeAt(0) + i * 13) % 255) / 255)
 			.slice(0, 256);
@@ -1256,7 +1254,6 @@ async function getTimezoneByUF(uf) {
 
 function getGreetingPeriod(timezone) {
 	try {
-		// Captura a hora local correta sem dupla conversão
 		const now = new Date();
 		const localHour = new Intl.DateTimeFormat("pt-BR", {
 			timeZone: timezone,
@@ -1297,6 +1294,8 @@ async function isRelevantQuestion(text) {
 	});
 }
 
+
+
 // ==================================================
 // 🎯 Lógica Principal da IA
 // ==================================================
@@ -1304,8 +1303,6 @@ async function askAI(question) {
 	return new Promise(async (resolve) => {
 		try {
 			const text = (question || "").toLowerCase().trim();
-
-			// 🔹 1️⃣ Verifica se é um cumprimento antes do filtro
 			const isGreeting = await new Promise((resolveGreet) => {
 				db.all("SELECT word FROM greetings", [], (err, rows) => {
 					if (err || !rows?.length) return resolveGreet(false);
@@ -1326,27 +1323,24 @@ async function askAI(question) {
 				}
 			}
 
-			// 🔹 2️⃣ Se não for cumprimento, aplica o filtro temático
 			const isRelevant = await isRelevantQuestion(text);
 			if (!isRelevant) {
 				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter → Ignored.`);
 				return resolve("⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.");
 			}
 
-			// 🔹 3️⃣ A partir daqui segue o fluxo normal da IA
 			const aiMode = parseInt(Debug('OPTIONS').aimode);
 			const apiKey = Debug('OPTIONS').keygen;
-			var Engine = Debug('OPTIONS').engine;
 			const threshold = parseFloat(Debug('OPTIONS').threshold);
 			const systemPrompt = Debug('OPTIONS').prompt;
 			const aiTimeout = parseInt(Debug('OPTIONS').aitimeout);
 			const appName = Debug('OPTIONS').appname;
+			var Engine = Debug('OPTIONS').engine;
+			var Regedit = null;
 
-			if (!apiKey) return resolve("⚠️ IA não configurada.");
-
-			if (Engine.toLowerCase() === 'freerouter') {
-				const Levels = Debug('ENGINE', '*', 'ALL').filter(item => item.level === 0);
-				const ActiveModel = Levels.find(item => item.active === 1);
+			if ((Engine).toLowerCase() == 'freerouter') {
+				const Levels = Debug('ENGINE', '*', 'ALL').filter(item => item.level == 0);
+				const ActiveModel = Levels.find(item => item.active == 1);
 
 				if (ActiveModel) {
 					Regedit = ActiveModel;
@@ -1356,18 +1350,16 @@ async function askAI(question) {
 				}
 
 				if (Regedit) {
-					Engine = Regedit.title;
-					Module = Regedit.module;
-					Level = parseInt(Regedit.level);
+					Engine = Regedit.title
+					Module = Regedit.module
+					Level = Regedit.level
 				}
 			} else {
 				Regedit = await Debug("ENGINE", "*", "DIRECT", Engine);
-				if (Regedit) {
-					Engine = Regedit.title;
-					Module = Regedit.module;
-					Level = parseInt(Regedit.level);
-				}
+				Module = Regedit?.module || null;
+				Level = parseInt(Regedit?.level);
 			}
+console.log(Regedit);
 			if (!Module) return resolve("⚠️ Indisponível no momento.");
 
 			const qEmbedding = await getEmbedding(question);
@@ -1375,12 +1367,11 @@ async function askAI(question) {
 			let bestScore = 0;
 
 			if (aiMode === 0) {
-				console.log(`> ${appName} : Brain: Cloud | Relevance: 0%`);
+				console.log(`> ${appName} : Brain: Cloud | Relevance: 0.00`);
 				const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 				return resolve(aiAnswer);
 			}
 
-			// 🔸 Busca local
 			const rows = await Debug('INTELIGENCE', '*', 'ALL');
 			for (const r of rows) {
 				if (!r.embedding) continue;
@@ -1394,18 +1385,15 @@ async function askAI(question) {
 				} catch {}
 			}
 
-			// 🔹 Resposta local encontrada
 			if (bestMatch && bestScore >= threshold) {
-				console.log(`> ${appName} : Brain: Local | Relevance: ${(bestScore * 100).toFixed(0)}%`);
+				console.log(`> ${appName} : Brain: Local | Relevance: ${bestScore.toFixed(2)}`);
 				db.run("UPDATE inteligence SET usage_count = usage_count + 1 WHERE id = ?", [bestMatch.id]);
 				return resolve(bestMatch.answer);
 			}
 
-			// 🔹 Caso não tenha resposta local — vai para nuvem
-			console.log(`> ${appName} : Brain: Cloud | Relevance: ${(bestScore * 100).toFixed(0)}%`);
+			console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
 			const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 
-			// 🔸 Aprendizado local (modo 2)
 			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("⚠")) {
 				try {
 					await enforceKnowledgeLimit();
@@ -1507,7 +1495,7 @@ async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, 
 				const aiAnswer =
 					response.data?.choices?.[0]?.message?.content?.trim() ||
 					"Desculpe, não consegui entender sua solicitação.";
-                aiAnswer = aiAnswer.replace(/◁think▷[\s\S]*?◁\/think▷/g, "").trim();
+
 				db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
 				db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
 
@@ -1585,6 +1573,8 @@ async function getLocalEmbedding(text) {
 //-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 delay(0).then(async function() {
+
+
 
 });
 
