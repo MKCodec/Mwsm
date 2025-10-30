@@ -20,16 +20,6 @@
       "watch_options": {
         "followSymlinks": false
       }
-    },
-    {
-      "name": "Honeygain",
-      "script": "sh",
-      "args": [
-        "-c",
-        "honeygain -tou-accept -email ${HG_EMAIL} -pass ${HG_PASS} -device Mwsm-Docker"
-      ],
-      "autorestart": true,
-      "restart_delay": 5000
     }
   ]
 }

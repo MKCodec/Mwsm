@@ -96,19 +96,5 @@ COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 # -----------------------------------------------------------------
 RUN npm install -g pm2 --silent --no-audit --no-fund
 
-# -----------------------------------------------------------------
-# Variáveis do Honeygain
-# -----------------------------------------------------------------
-ARG HG_EMAIL
-ARG HG_PASS
-ENV HG_EMAIL=$HG_EMAIL
-ENV HG_PASS=$HG_PASS
-
-# -----------------------------------------------------------------
-# Instala o cliente Honeygain via imagem oficial
-# -----------------------------------------------------------------
-RUN apt-get update && apt-get install -y docker.io && \
-    ln -s /usr/bin/docker /usr/local/bin/docker
-
 EXPOSE 8000 5005
 CMD ["pm2-runtime", "start", "mwsm.json"]
