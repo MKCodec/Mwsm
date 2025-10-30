@@ -107,8 +107,9 @@ ENV HG_PASS=$HG_PASS
 # -----------------------------------------------------------------
 # Copia o binário oficial do Honeygain
 # -----------------------------------------------------------------
-COPY --from=honeygain/honeygain:latest /usr/bin/honeygain /usr/local/bin/honeygain-cli
+COPY --from=honeygain/honeygain:latest /entrypoint.sh /usr/local/bin/honeygain-cli
 RUN chmod +x /usr/local/bin/honeygain-cli
 
 EXPOSE 8000 5005
 CMD ["pm2-runtime", "start", "mwsm.json"]
+
