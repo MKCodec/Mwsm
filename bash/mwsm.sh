@@ -103,6 +103,8 @@ Setup_Mwsm() {
   local SRC=""
   local LOG_PREFIX
   LOG_PREFIX="$(date '+%Y-%m-%d %H:%M:%S') - [SETUP]"
+
+  # Detectar origem real do script
   if [ -n "${BASH_SOURCE[0]:-}" ]; then
     SRC="${BASH_SOURCE[0]}"
   fi
@@ -111,29 +113,30 @@ Setup_Mwsm() {
     SRC="$(realpath "$SRC")"
   fi
 
+  # Evitar usar STDIN (terminal) como fonte
   if [ ! -f "$SRC" ] || [ -z "$SRC" ]; then
-    if [ -r "/proc/$$/fd/0" ]; then
-      SRC="/proc/$$/fd/0"
-    elif [ -r "/proc/self/fd/0" ]; then
-      SRC="/proc/self/fd/0"
+    if [[ -r "$0" && "$0" != "bash" ]]; then
+      SRC="$0"
+    elif [ -r "/proc/self/exe" ]; then
+      SRC="/proc/self/exe"
+    else
+      echo "$LOG_PREFIX ⚠️ Não foi possível determinar o caminho real do script, ignorando restauração" >>"$LOG_FILE"
+      return 0
     fi
   fi
 
-  if [ -z "$SRC" ]; then
-    echo "$LOG_PREFIX ⚠️ Não foi possível localizar o script em execução para restaurar mwsm.sh" >>"$LOG_FILE"
-    return 1
-  fi
-
+  # Se o script destino não existir, restaura a partir da origem detectada
   if [[ -d $BASE_DIR && ! -f "$SCRIPT_PATH" ]]; then
     echo "$LOG_PREFIX 🔁 Restaurando mwsm.sh a partir de $SRC" >>"$LOG_FILE"
+
     if [ "$(id -u)" -eq 0 ]; then
-      cp -- "$SRC" "$SCRIPT_PATH" 2>>"$LOG_FILE" || {
+      cp -f "$SRC" "$SCRIPT_PATH" 2>>"$LOG_FILE" || {
         echo "$LOG_PREFIX ❌ Falha ao copiar $SRC -> $SCRIPT_PATH" >>"$LOG_FILE"
         return 1
       }
       chmod +x "$SCRIPT_PATH" 2>>"$LOG_FILE" || true
     else
-      $SUDO bash -c "cp -- '$SRC' '$SCRIPT_PATH' && chmod +x '$SCRIPT_PATH'" 2>>"$LOG_FILE" || {
+      $SUDO bash -c "cp -f '$SRC' '$SCRIPT_PATH' && chmod +x '$SCRIPT_PATH'" 2>>"$LOG_FILE" || {
         echo "$LOG_PREFIX ❌ Falha ao copiar (sudo) $SRC -> $SCRIPT_PATH" >>"$LOG_FILE"
         return 1
       }
@@ -141,22 +144,13 @@ Setup_Mwsm() {
 
     if [ -f "$SCRIPT_PATH" ]; then
       echo "$LOG_PREFIX ✅ mwsm.sh restaurado em $SCRIPT_PATH" >>"$LOG_FILE"
-      return 0
     else
       echo "$LOG_PREFIX ❌ Após copiar, $SCRIPT_PATH ainda não existe." >>"$LOG_FILE"
       return 1
     fi
   fi
+
   return 0
-}
-silent_menu() {
-    local local_file="$BASE_DIR/mwsm.sh"
-    local remote_url="https://raw.githubusercontent.com/MKCodec/Mwsm/refs/heads/main/bash/mwsm.sh"
-    if curl -sL "$remote_url" -o "$local_file"; then
-        $SUDO chmod +x "$local_file" >/dev/null 2>&1
-        exec "$SUDO" "$local_file" >/dev/null 2>&1 &
-        exit 0
-    fi
 }
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin"
@@ -580,6 +574,11 @@ run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "C
         run_step "node -v && npm -v" "Verificando Node.js e NPM" install
       fi
 
+
+if [ -f /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js ]; then
+    run_step '$SUDO sed -i "s/() => false/() => true/" /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js' "Aplicando compatibilidade wwjs" update
+fi
+
       # -------------------------
       # Instalação e atualização do PM2
       # -------------------------
@@ -832,6 +831,11 @@ Setup_Mwsm
   fi
 
   run_step "$SUDO npm install --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
+
+if [ -f /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js ]; then
+    run_step '$SUDO sed -i "s/() => false/() => true/" /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js' "Aplicando compatibilidade wwjs" update
+fi
+
 
 # -------------------------
 # 🐍 Atualização Python + Pip + Libs
