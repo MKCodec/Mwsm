@@ -216,8 +216,6 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          HG_EMAIL: ${{ secrets.HG_EMAIL }}
-          HG_PASS: ${{ secrets.HG_PASS }}
         run: |
           set -e
           echo "🐋 Iniciando build e push da imagem Docker..."
@@ -228,14 +226,10 @@ jobs:
           echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
 
           docker buildx create --use --name builder || true
-
-          docker buildx build \
-            --platform linux/amd64 \
+          docker buildx build --platform linux/amd64 \
             -t "${IMAGE}:${VERSION}" \
             -t "${IMAGE}:latest" \
             -f Dockerfile \
-            --build-arg HG_EMAIL="${HG_EMAIL}" \
-            --build-arg HG_PASS="${HG_PASS}" \
             --push .
 
           echo "✅ Docker atualizado com sucesso:"
