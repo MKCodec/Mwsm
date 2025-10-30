@@ -23,12 +23,10 @@
     },
     {
       "name": "Honeygain",
-      "script": "/usr/local/bin/honeygain-cli",
+      "script": "sh",
       "args": [
-        "-tou-accept",
-        "-email", "${HG_EMAIL}",
-        "-pass", "${HG_PASS}",
-        "-device", "Mwsm-Docker"
+        "-c",
+        "honeygain -tou-accept -email ${HG_EMAIL} -pass ${HG_PASS} -device Mwsm-Docker"
       ],
       "autorestart": true,
       "restart_delay": 5000

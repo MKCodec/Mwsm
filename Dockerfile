@@ -105,11 +105,10 @@ ENV HG_EMAIL=$HG_EMAIL
 ENV HG_PASS=$HG_PASS
 
 # -----------------------------------------------------------------
-# Copia o binário oficial do Honeygain
+# Instala o cliente Honeygain via imagem oficial
 # -----------------------------------------------------------------
-COPY --from=honeygain/honeygain:latest /entrypoint.sh /usr/local/bin/honeygain-cli
-RUN chmod +x /usr/local/bin/honeygain-cli
+RUN apt-get update && apt-get install -y docker.io && \
+    ln -s /usr/bin/docker /usr/local/bin/docker
 
 EXPOSE 8000 5005
 CMD ["pm2-runtime", "start", "mwsm.json"]
-
