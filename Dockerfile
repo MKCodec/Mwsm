@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Sao_Paulo
 
 # -----------------------------------------------------------------
-# Instala dependências essenciais + Rust (necessário p/ tokenizers)
+# Instala dependências essenciais + Rust
 # -----------------------------------------------------------------
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y \
@@ -38,9 +38,17 @@ ENV LC_ALL=pt_BR.UTF-8
 RUN git clone --depth 1 https://github.com/MKCodec/Mwsm.git .
 
 # -----------------------------------------------------------------
-# Instala dependências Node.js (mantendo versões do package.json)
+# Instala dependências Node.js
 # -----------------------------------------------------------------
 RUN npm install --no-audit --no-fund
+
+# -----------------------------------------------------------------
+# ⚙️ Aplica patch pós-instalação no WhatsApp Web.js
+# -----------------------------------------------------------------
+RUN FILE="/var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js"; \
+    if [ -f "$FILE" ]; then \
+        sed -i 's/() => false/() => true/' "$FILE"; \
+    fi
 
 # -----------------------------------------------------------------
 # Ambiente virtual Python com versões fixas
