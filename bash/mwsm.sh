@@ -470,6 +470,7 @@ if [[ "$DISTRO_DETECT" == "devuan" ]]; then
   run_step "cd /tmp && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO python3 -m pip install --quiet --no-input \
+    --target=/usr/lib/python3/dist-packages \
     'flask==2.2.5' \
     'sentence-transformers==2.2.2' \
     'transformers==4.25.1' \
@@ -498,6 +499,7 @@ else
   run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
     python3 -m pip install --quiet --no-input $PIP_BREAK_OPT \
+    --target=/usr/lib/python3/dist-packages \
     'flask==2.2.5' \
     'sentence-transformers==2.2.2' \
     'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
@@ -517,9 +519,9 @@ else
   run_step "
     command -v pip3 >/dev/null 2>&1 || $SUDO apt install -y python3-pip >/dev/null 2>&1
     for pkg in flask sentence-transformers huggingface_hub; do
-      python3 -m pip show \$pkg >/dev/null 2>&1 || $SUDO python3 -m pip show \$pkg >/dev/null 2>&1 || \
+      python3 -m pip show \$pkg >/dev/null 2>&1 || \
       $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-      python3 -m pip install --quiet --no-input \$PIP_BREAK_OPT \$pkg >/dev/null 2>&1 || true
+      python3 -m pip install --quiet --no-input \$PIP_BREAK_OPT --target=/usr/lib/python3/dist-packages \$pkg >/dev/null 2>&1 || true
     done
   " 'Verificando integridade Python' install
 fi
@@ -879,6 +881,7 @@ if [[ "$DISTRO_DETECT" == "devuan" ]]; then
   run_step "cd /tmp && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO python3 -m pip install --quiet --no-input \
+      --target=/usr/lib/python3/dist-packages \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
       'transformers==4.25.1' \
@@ -905,6 +908,7 @@ else
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
     python3 -m pip install --quiet --no-input $PIP_BREAK_OPT \
+      --target=/usr/lib/python3/dist-packages \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
       'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
