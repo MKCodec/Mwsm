@@ -188,10 +188,6 @@ NODE_INSTALL_FAILED=false
 NPM_INSTALL_FAILED=false
 LAST_SUCCESS=""
 detect_distro
-if [ "$DISTRO" != "devuan" ] && [ "$DISTRO_DETECT" != "devuan" ]; then
-  export PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
-fi
-
 
 # =================================
 # Modo de log completo
@@ -489,7 +485,7 @@ run_step "cd /tmp && \
   'Atualizando Python' install
   run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-    python3 -m pip install --quiet --no-input \
+    python3 -m pip install --quiet --no-input --break-system-packages \
     'flask==2.2.5' \
     'sentence-transformers==2.2.2' \
     'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
@@ -511,10 +507,11 @@ else
     for pkg in flask sentence-transformers huggingface_hub; do
       python3 -m pip show \$pkg >/dev/null 2>&1 || $SUDO python3 -m pip show \$pkg >/dev/null 2>&1 || \
       $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-      python3 -m pip install --quiet --no-input \$pkg >/dev/null 2>&1 || true
+      python3 -m pip install --quiet --no-input --break-system-packages \$pkg >/dev/null 2>&1 || true
     done
   " 'Verificando integridade Python' install
 fi
+
 
 
   
@@ -886,12 +883,13 @@ run_step "cd /tmp && \
   run_step "cd /tmp && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-    python3 -m pip install --quiet --no-input \
+    python3 -m pip install --quiet --no-input --break-system-packages \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
       'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
       "Atualizando libs Python" update
 fi
+
 
 
 
