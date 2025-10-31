@@ -488,7 +488,8 @@ run_step "cd /tmp && \
   $SUDO python3 -m pip install --no-input --quiet --upgrade setuptools wheel >/dev/null 2>&1 || true" \
   'Atualizando Python' install
   run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-    $SUDO python3 -m pip install --quiet --no-input \
+    $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
+    python3 -m pip install --quiet --no-input \
     'flask==2.2.5' \
     'sentence-transformers==2.2.2' \
     'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
@@ -509,10 +510,12 @@ else
     command -v pip3 >/dev/null 2>&1 || $SUDO apt install -y python3-pip >/dev/null 2>&1
     for pkg in flask sentence-transformers huggingface_hub; do
       python3 -m pip show \$pkg >/dev/null 2>&1 || $SUDO python3 -m pip show \$pkg >/dev/null 2>&1 || \
-      $SUDO python3 -m pip install --quiet --no-input \$pkg >/dev/null 2>&1 || true
+      $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
+      python3 -m pip install --quiet --no-input \$pkg >/dev/null 2>&1 || true
     done
   " 'Verificando integridade Python' install
 fi
+
 
   
 # -------------------------
@@ -882,12 +885,14 @@ run_step "cd /tmp && \
 
   run_step "cd /tmp && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-    $SUDO python3 -m pip install --quiet --no-input \
+    $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
+    python3 -m pip install --quiet --no-input \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
       'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
       "Atualizando libs Python" update
 fi
+
 
 
 
