@@ -124,17 +124,6 @@ Setup_Mwsm() {
       return 0
     fi
   fi
-
-silent_menu() {
-    local local_file="$BASE_DIR/mwsm.sh"
-    local remote_url="https://raw.githubusercontent.com/MKCodec/Mwsm/refs/heads/main/bash/mwsm.sh"
-    if curl -sL "$remote_url" -o "$local_file"; then
-        $SUDO chmod +x "$local_file" >/dev/null 2>&1
-        exec "$SUDO" "$local_file" >/dev/null 2>&1 &
-        exit 0
-    fi
-}
-
   # Se o script destino não existir, restaura a partir da origem detectada
   if [[ -d $BASE_DIR && ! -f "$SCRIPT_PATH" ]]; then
     echo "$LOG_PREFIX 🔁 Restaurando mwsm.sh a partir de $SRC" >>"$LOG_FILE"
@@ -161,6 +150,16 @@ silent_menu() {
   fi
 
   return 0
+}
+
+silent_menu() {
+    local local_file="$BASE_DIR/mwsm.sh"
+    local remote_url="https://raw.githubusercontent.com/MKCodec/Mwsm/refs/heads/main/bash/mwsm.sh"
+    if curl -sL "$remote_url" -o "$local_file"; then
+        $SUDO chmod +x "$local_file" >/dev/null 2>&1
+        exec "$SUDO" "$local_file" >/dev/null 2>&1 &
+        exit 0
+    fi
 }
 
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin"
