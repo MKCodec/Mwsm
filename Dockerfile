@@ -52,18 +52,23 @@ RUN FILE="/var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js"
 # Ambiente Python (fixo, compatível com Debian Bookworm / Python 3.11)
 # -----------------------------------------------------------------
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     /opt/venv/bin/pip install --no-cache-dir \
+      "numpy<2" \
       "filelock<3.13.0" \
       "typing-extensions<4.6.0" \
+      "torch==2.1.0+cpu" \
+      "torchvision==0.16.0+cpu" \
+      -f https://download.pytorch.org/whl/cpu && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    /opt/venv/bin/pip install --no-cache-dir \
       "flask==2.2.5" \
-      "sentence-transformers==2.2.2" \
       "transformers==4.25.1" \
       "safetensors==0.3.1" \
       "huggingface_hub==0.10.1" \
-      "torch==2.1.0+cpu" \
-      "torchvision==0.16.0+cpu" \
-      --extra-index-url https://download.pytorch.org/whl/cpu
+      "sentence-transformers==2.2.2"
 
 
 # =========================
