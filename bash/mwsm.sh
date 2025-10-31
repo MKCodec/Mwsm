@@ -443,49 +443,61 @@ run_step "$SUDO bash -c '
 # 🐍 Python + Pip + Libs
 # -------------------------
 
-if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-      run_step "$SUDO apt update -y >/dev/null 2>&1 && \
-        $SUDO apt install -y python3 python3-pip python3-venv \
-        -o Dpkg::Options::='--force-confdef' \
-        -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
-        'Instalando Python' install
-
-      if ! command -v pip3 >/dev/null 2>&1; then
-        run_step "$SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1" \
-          'Restaurando pip' install
-      fi
-      run_step "cd /tmp && \
-        PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-        $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel" \
-        'Atualizando Python' instal
-        run_step "cd /tmp && \
-          PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-          $SUDO python3 -m pip install --quiet --no-input \
-          'flask==2.2.5' \
-          'sentence-transformers==2.2.2' \
-          'transformers==4.25.1' \
-          'safetensors==0.3.1' \
-          'huggingface_hub==0.10.1'" \
-          'Instalando libs Python' install
+# Detecta se o pip suporta --break-system-packages (compatibilidade entre versões)
+if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
+  PIP_BREAK_OPT="--break-system-packages"
 else
-run_step "$SUDO apt update -y >/dev/null 2>&1 && \
-  $SUDO apt install -y python3 python3-pip python3-venv \
-  -o Dpkg::Options::='--force-confdef' \
-  -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
-  'Instalando Python' install
-
-if ! command -v pip3 >/dev/null 2>&1; then
-  run_step "$SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1" \
-    'Restaurando pip' install
+  PIP_BREAK_OPT=""
 fi
-run_step "cd /tmp && \
-  PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1 && \
-  $SUDO python3 -m pip install --no-input --quiet --upgrade setuptools wheel >/dev/null 2>&1 || true" \
-  'Atualizando Python' install
+
+if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+  run_step "$SUDO apt update -y >/dev/null 2>&1 && \
+    $SUDO apt install -y python3 python3-pip python3-venv \
+    -o Dpkg::Options::='--force-confdef' \
+    -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
+    'Instalando Python' install
+
+  if ! command -v pip3 >/dev/null 2>&1; then
+    run_step "$SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1" \
+      'Restaurando pip' install
+  fi
+
+  run_step "cd /tmp && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel" \
+    'Atualizando Python' install
+
+  run_step "cd /tmp && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    $SUDO python3 -m pip install --quiet --no-input \
+    'flask==2.2.5' \
+    'sentence-transformers==2.2.2' \
+    'transformers==4.25.1' \
+    'safetensors==0.3.1' \
+    'huggingface_hub==0.10.1'" \
+    'Instalando libs Python' install
+
+else
+  run_step "$SUDO apt update -y >/dev/null 2>&1 && \
+    $SUDO apt install -y python3 python3-pip python3-venv \
+    -o Dpkg::Options::='--force-confdef' \
+    -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
+    'Instalando Python' install
+
+  if ! command -v pip3 >/dev/null 2>&1; then
+    run_step "$SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1" \
+      'Restaurando pip' install
+  fi
+
+  run_step "cd /tmp && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1 && \
+    $SUDO python3 -m pip install --no-input --quiet --upgrade setuptools wheel >/dev/null 2>&1 || true" \
+    'Atualizando Python' install
+
   run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-    python3 -m pip install --quiet --no-input --break-system-packages \
+    python3 -m pip install --quiet --no-input $PIP_BREAK_OPT \
     'flask==2.2.5' \
     'sentence-transformers==2.2.2' \
     'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
@@ -507,7 +519,7 @@ else
     for pkg in flask sentence-transformers huggingface_hub; do
       python3 -m pip show \$pkg >/dev/null 2>&1 || $SUDO python3 -m pip show \$pkg >/dev/null 2>&1 || \
       $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-      python3 -m pip install --quiet --no-input --break-system-packages \$pkg >/dev/null 2>&1 || true
+      python3 -m pip install --quiet --no-input \$PIP_BREAK_OPT \$pkg >/dev/null 2>&1 || true
     done
   " 'Verificando integridade Python' install
 fi
@@ -850,11 +862,20 @@ fi
 # 🐍 Atualização Python + Pip + Libs
 # -------------------------
 
+# Detecta se o pip suporta --break-system-packages (compatibilidade entre versões)
+if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
+  PIP_BREAK_OPT="--break-system-packages"
+else
+  PIP_BREAK_OPT=""
+fi
+
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
   if ! command -v python3 >/dev/null 2>&1; then
     run_step "$SUDO apt install -y python3 python3-pip python3-venv --no-install-recommends >/dev/null 2>&1" "Instalando Python" update
   fi
+
   run_step "$SUDO python3 -m pip install --quiet --upgrade pip setuptools wheel" "Atualizando pip" update
+
   run_step "cd /tmp && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO python3 -m pip install --quiet --no-input \
@@ -864,26 +885,26 @@ if [[ "$DISTRO_DETECT" == "devuan" ]]; then
       'safetensors==0.3.1' \
       'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
       "Atualizando libs Python" update
+
 else
+  if ! command -v python3 >/dev/null 2>&1; then
+    run_step "$SUDO apt update -y >/dev/null 2>&1 && \
+      $SUDO apt install -y python3 python3-pip python3-venv \
+      -o Dpkg::Options::='--force-confdef' \
+      -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
+      "Instalando Python" update
+  fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  run_step "$SUDO apt update -y >/dev/null 2>&1 && \
-    $SUDO apt install -y python3 python3-pip python3-venv \
-    -o Dpkg::Options::='--force-confdef' \
-    -o Dpkg::Options::='--force-confold' >/dev/null 2>&1" \
-    "Instalando Python" update
-fi
-
-run_step "cd /tmp && \
-  PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-  $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1 && \
-  $SUDO python3 -m pip install --no-input --quiet --upgrade setuptools wheel >/dev/null 2>&1 || true" \
-  "Atualizando pip" update
+  run_step "cd /tmp && \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    $SUDO python3 -m ensurepip --upgrade >/dev/null 2>&1 && \
+    $SUDO python3 -m pip install --no-input --quiet --upgrade setuptools wheel >/dev/null 2>&1 || true" \
+    "Atualizando pip" update
 
   run_step "cd /tmp && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
-    python3 -m pip install --quiet --no-input --break-system-packages \
+    python3 -m pip install --quiet --no-input $PIP_BREAK_OPT \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
       'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
