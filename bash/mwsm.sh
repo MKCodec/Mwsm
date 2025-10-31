@@ -439,6 +439,7 @@ run_step "$SUDO bash -c '
       INSTALL_FAILED=true
     else
 
+
 # -------------------------
 # 🐍 Python + Pip + Libs
 # -------------------------
@@ -451,6 +452,7 @@ else
 fi
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+  # --- Instalação simplificada (Devuan já possui CUDA + PyTorch nativo) ---
   run_step "$SUDO apt update -y >/dev/null 2>&1 && \
     $SUDO apt install -y python3 python3-pip python3-venv \
     -o Dpkg::Options::='--force-confdef' \
@@ -467,18 +469,17 @@ if [[ "$DISTRO_DETECT" == "devuan" ]]; then
     $SUDO python3 -m pip install --quiet --no-input --upgrade pip setuptools wheel" \
     'Atualizando Python' install
 
-  run_step "cd /tmp && \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+  run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO python3 -m pip install --quiet --no-input \
-    --target=/usr/lib/python3/dist-packages \
-    'flask==2.2.5' \
-    'sentence-transformers==2.2.2' \
-    'transformers==4.25.1' \
-    'safetensors==0.3.1' \
-    'huggingface_hub==0.10.1'" \
+      'flask==2.2.5' \
+      'sentence-transformers==2.2.2' \
+      'transformers==4.25.1' \
+      'safetensors==0.3.1' \
+      'huggingface_hub==0.10.1'" \
     'Instalando libs Python' install
 
 else
+  # --- Caminho completo para Debian/Ubuntu (sem CUDA) ---
   run_step "$SUDO apt update -y >/dev/null 2>&1 && \
     $SUDO apt install -y python3 python3-pip python3-venv \
     -o Dpkg::Options::='--force-confdef' \
@@ -499,23 +500,31 @@ else
   run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
     python3 -m pip install --quiet --no-input $PIP_BREAK_OPT \
-    --target=/usr/lib/python3/dist-packages \
-    'flask==2.2.5' \
-    'sentence-transformers==2.2.2' \
-    'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
+      --target=/usr/lib/python3/dist-packages \
+      'filelock<3.13.0' \
+      'typing-extensions<4.6.0' \
+      'flask==2.2.5' \
+      'sentence-transformers==2.2.2' \
+      'transformers==4.25.1' \
+      'safetensors==0.3.1' \
+      'huggingface_hub==0.10.1' \
+      'torch==1.13.1+cpu' \
+      'torchvision==0.14.1+cpu' \
+      -f https://download.pytorch.org/whl/cpu >/dev/null 2>&1 || true" \
     'Instalando libs Python' install
 fi
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-  # --- Compatibilidade Devuan (Beowulf) ---
+  # --- Compatibilidade Devuan (simples, sem sobreposição) ---
   run_step "
     command -v pip3 >/dev/null 2>&1 || $SUDO apt install -y python3-pip >/dev/null 2>&1
-    $SUDO python3 -m pip show flask >/dev/null 2>&1 || $SUDO python3 -m pip install --quiet flask
-    $SUDO python3 -m pip show sentence-transformers >/dev/null 2>&1 || $SUDO python3 -m pip install --quiet sentence-transformers
-    $SUDO python3 -m pip show huggingface_hub >/dev/null 2>&1 || $SUDO python3 -m pip install --quiet huggingface_hub
+    for pkg in flask sentence-transformers huggingface_hub; do
+      python3 -m pip show \$pkg >/dev/null 2>&1 || \
+      $SUDO python3 -m pip install --quiet --no-input \$pkg >/dev/null 2>&1 || true
+    done
   " 'Verificando integridade Python' install
 else
-  # --- Compatibilidade Debian 11+ / Ubuntu 20+ ---
+  # --- Compatibilidade Debian/Ubuntu ---
   run_step "
     command -v pip3 >/dev/null 2>&1 || $SUDO apt install -y python3-pip >/dev/null 2>&1
     for pkg in flask sentence-transformers huggingface_hub; do
@@ -525,6 +534,7 @@ else
     done
   " 'Verificando integridade Python' install
 fi
+
 
 
 
@@ -872,24 +882,24 @@ else
 fi
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+  # --- Devuan com CUDA: atualização mínima ---
   if ! command -v python3 >/dev/null 2>&1; then
     run_step "$SUDO apt install -y python3 python3-pip python3-venv --no-install-recommends >/dev/null 2>&1" "Instalando Python" update
   fi
 
   run_step "$SUDO python3 -m pip install --quiet --upgrade pip setuptools wheel" "Atualizando pip" update
 
-  run_step "cd /tmp && \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+  run_step "PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     $SUDO python3 -m pip install --quiet --no-input \
-      --target=/usr/lib/python3/dist-packages \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
       'transformers==4.25.1' \
       'safetensors==0.3.1' \
-      'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
-      "Atualizando libs Python" update
+      'huggingface_hub==0.10.1'" \
+    "Atualizando libs Python" update
 
 else
+  # --- Debian/Ubuntu sem CUDA ---
   if ! command -v python3 >/dev/null 2>&1; then
     run_step "$SUDO apt update -y >/dev/null 2>&1 && \
       $SUDO apt install -y python3 python3-pip python3-venv \
@@ -909,14 +919,18 @@ else
     $SUDO env PIP_EXTRA_INDEX_URL='https://download.pytorch.org/whl/cpu' \
     python3 -m pip install --quiet --no-input $PIP_BREAK_OPT \
       --target=/usr/lib/python3/dist-packages \
+      'filelock<3.13.0' \
+      'typing-extensions<4.6.0' \
       'flask==2.2.5' \
       'sentence-transformers==2.2.2' \
-      'huggingface_hub==0.10.1' >/dev/null 2>&1 || true" \
-      "Atualizando libs Python" update
+      'transformers==4.25.1' \
+      'safetensors==0.3.1' \
+      'huggingface_hub==0.10.1' \
+      'torch==1.13.1+cpu' \
+      'torchvision==0.14.1+cpu' \
+      -f https://download.pytorch.org/whl/cpu >/dev/null 2>&1 || true" \
+    "Atualizando libs Python" update
 fi
-
-
-
 
 
   if command -v pm2 >/dev/null 2>&1; then
