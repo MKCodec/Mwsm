@@ -10,9 +10,9 @@
     "start:dev": "nodemon mwsm.js",
     "setup:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush",
     "setup:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush",
-    "start:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush && pm2 log 0",
-    "start:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush && pm2 log 0",
-    "restart:mwsm": "npm run update:wa && pm2 restart mwsm.json && pm2 flush && pm2 log 0"
+    "start:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush && pm2 logs",
+    "start:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush && pm2 logs",
+    "restart:mwsm": "npm run update:wa && pm2 restart mwsm.json && pm2 flush && pm2 logs"
   },
   "repository": {
     "type": "git",
