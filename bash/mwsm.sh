@@ -1050,13 +1050,6 @@ uninstall() {
     run_step "skip" "Limpando diretórios" uninstall
   fi
 
-  # Removendo link do comando mwsm
-  if [ -L /usr/local/bin/mwsm ] || [ -f /usr/local/bin/mwsm ]; then
-    run_step "$SUDO rm -f /usr/local/bin/mwsm" "Removendo comando mwsm" uninstall || UNINSTALL_FAILED=true
-  else
-    run_step "skip" "Removendo comando mwsm" uninstall
-  fi
-
   if [ "$NO_PAUSE" = false ]; then
     if [ "$UNINSTALL_FAILED" = false ]; then
       echo "-------------------------------------"
