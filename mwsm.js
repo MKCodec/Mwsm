@@ -4665,30 +4665,60 @@ const Build = async (SET) => {
 };
 
 
-// WhatsApp Bot
-client.on('message', async msg => {
+const lastRequestTimes = new Map();
+let lastGlobalRequest = 0;
+let globalQueue = Promise.resolve();
 
-	// ==================================================
-	// 🤖 Bot Menu e Controle Inteligente de IA
-	// ==================================================
-	const lastRequestTimes = new Map();
-	let lastGlobalRequest = 0;
-	let globalQueue = Promise.resolve();
+// ==================================================
+// 🤖 WhatsApp Bot — Menu + IA 
+// ==================================================
+client.on('message', async msg => {
+	const nomeContato = msg._data.notifyName;
+	let groupChat = await msg.getChat();
+
+	if (msg.type.toLowerCase() == "e2e_notification") return null;
+	if (msg.body == "") return null;
+	if (msg.from.includes("@g.us")) return null;
+
+	const NULLED = [undefined, "XXX", null, ""];
+	var isWid = msg.from.replace(/@.*/, '');
+	const RegEx = new Set("!@#:$%^&*()_");
+	for (let Return of isWid) {
+		if (RegEx.has(Return)) {
+			isWid = isWid.replace(Return, '%');
+		}
+	}
+	isWid = isWid.split("%")[0];
+	var WhatsApp = msg.from;
+	const isWhatsApp = isWid; 
+	if (msg.body.trim().toLowerCase() === "menu") {
+		if (activeMenus.has(msg.from)) {
+			await client.sendMessage(msg.from, "⚠️ Você já está dentro do menu.\nEnvie *0* para sair primeiro.");
+			return;
+		}
+
+		activeMenus.set(msg.from, true);
+		await client.sendMessage(
+			msg.from,
+			'📋 *Menu Principal*\n\n' +
+			'1️⃣ Boleto\n' +
+			'2️⃣ Suporte\n' +
+			'0️⃣ Encerrar\n\n' +
+			'👉 Responda com o número da opção:'
+		);
+		return;
+	}
 
 	if (activeMenus.has(msg.from)) {
 		if (activeSupportIA.has(msg.from)) {
 			try {
 				const _iaExit = (msg.body || '').toString().trim().toLowerCase();
-
-				// 🔹 Encerrar atendimento
 				if (["0", "sair", "tchau", "tchal"].includes(_iaExit)) {
 					activeSupportIA.delete(msg.from);
 					activeMenus.delete(msg.from);
-					await client.sendMessage(msg.from, "✅ Atendimento encerrado. Obrigado pelo contato!");
+					await client.sendMessage(msg.from, "✅ Atendimento encerrado.\nObrigado pelo contato!");
 					return;
 				}
-
-				// 🔹 Voltar ao menu principal
 				if (_iaExit === "menu") {
 					activeSupportIA.delete(msg.from);
 					activeMenus.set(msg.from, true);
@@ -4698,7 +4728,7 @@ client.on('message', async msg => {
 						'1️⃣ Boleto\n' +
 						'2️⃣ Suporte\n' +
 						'0️⃣ Encerrar\n\n' +
-						'👉 Responda com o número da opção desejada.'
+						'👉 Responda com o número da opção:'
 					);
 					return;
 				}
@@ -4721,24 +4751,17 @@ client.on('message', async msg => {
 				const waitGlobal = Math.max(0, globalDelay - sinceGlobal);
 				const totalWait = Math.max(waitUser, waitGlobal);
 
-				// ==================================================
-				// 🔹 Modo Free — com fila e controle global
-				// ==================================================
 				if (Level === 0) {
 					globalQueue = globalQueue.then(async () => {
 						try {
 							if (totalWait > 0) {
 								const typingInterval = setInterval(async () => {
-									try {
-										await chat.sendStateTyping();
-									} catch {}
+									try { await chat.sendStateTyping(); } catch {}
 								}, 4000);
 
 								await new Promise(r => setTimeout(r, totalWait));
 								clearInterval(typingInterval);
-								try {
-									await chat.clearState();
-								} catch {}
+								try { await chat.clearState(); } catch {}
 							}
 
 							lastRequestTimes.set(msg.from, Date.now());
@@ -4756,23 +4779,12 @@ client.on('message', async msg => {
 							await chat.clearState();
 
 							const reply = await askAI(msg.body);
-							await client.sendMessage(msg.from, reply);
+							await client.sendMessage(msg.from, reply, { quotedMessageId: undefined });
 						} catch (err) {
 							console.error("Erro ao processar IA (free):", err.message);
-							try {
-								const reply = await askAI(msg.body);
-								await client.sendMessage(msg.from, reply);
-							} catch (e2) {
-								console.error("Erro secundário:", e2.message);
-							}
 						}
 					}).catch(e => console.error("Erro na fila global:", e.message));
-				}
-
-				// ==================================================
-				// 🔹 Modo Premium — Resposta direta (sem fila)
-				// ==================================================
-				else {
+				} else {
 					const tLevel = parseInt(Debug('OPTIONS').typingspeed);
 					const multiplier = 1 + (5 - tLevel) * 0.25;
 					const baseTime = 800 * multiplier;
@@ -4785,14 +4797,14 @@ client.on('message', async msg => {
 					await chat.clearState();
 
 					const reply = await askAI(msg.body);
-					await client.sendMessage(msg.from, reply);
+					await client.sendMessage(msg.from, reply, { quotedMessageId: undefined });
 				}
 
 			} catch (err) {
 				console.error("Erro ao simular digitando:", err.message);
 				try {
 					const reply = await askAI(msg.body);
-					await client.sendMessage(msg.from, reply);
+					await client.sendMessage(msg.from, reply, { quotedMessageId: undefined });
 				} catch (e2) {
 					console.error("Erro no fallback de IA:", e2.message);
 				}
@@ -4800,9 +4812,6 @@ client.on('message', async msg => {
 			return;
 		}
 
-		// ==================================================
-		// 📋 Menu principal
-		// ==================================================
 		if (msg.body.startsWith('1')) {
 			await client.sendMessage(msg.from, '🔗 Aqui está o link do seu boleto: https://seudominio.com/boleto');
 			return;
@@ -4815,49 +4824,11 @@ client.on('message', async msg => {
 		}
 
 		if (msg.body.startsWith('0')) {
-			await client.sendMessage(msg.from, '✅ Atendimento encerrado. Obrigado pelo contato!');
+			await client.sendMessage(msg.from, '✅ Atendimento encerrado.\nObrigado pelo contato!');
 			activeMenus.delete(msg.from);
 			return;
 		}
 	}
-
-	if (msg.body.toLowerCase() === 'menu') {
-		activeMenus.set(msg.from, true);
-		await client.sendMessage(msg.from,
-			'📋 *Menu Principal*\n\n' +
-			'1️⃣ Boleto\n' +
-			'2️⃣ Suporte\n' +
-			'0️⃣ Encerrar\n\n' +
-			'👉 Responda com o número da opção desejada.'
-		);
-		return;
-	}
-
-	const nomeContato = msg._data.notifyName;
-	let groupChat = await msg.getChat();
-
-	if (msg.type.toLowerCase() == "e2e_notification") return null;
-	if (msg.body == "") return null;
-	if (msg.from.includes("@g.us")) return null;
-	const NULLED = [undefined, "XXX", null, ""];
-	var isWid = msg.from;
-	const RegEx = new Set("!@#:$%^&*()_");
-	for (let Return of isWid) {
-		if (RegEx.has(Return)) {
-			isWid = isWid.replace(Return, '%');
-		}
-	}
-	isWid = isWid.split("%")[0];
-	const isDDI = isWid.substr(0, 2);
-	const isDDD = isWid.substr(2, 2);
-	const isCall = isWid.slice(-8);
-	var WhatsApp = isWid + '@c.us';
-	if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-		WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-	} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-		WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
-	}
-	const isWhatsApp = WhatsApp.split("@")[0];
 	if (msg.body.toUpperCase().includes("TOKEN") && NULLED.includes(Debug('OPTIONS').token)) {
 		if (msg.body.includes(":") && (msg.body.split(":")[1].length == 7)) {
 			db.run("UPDATE options SET token=?", [msg.body.split(":")[1]], (err) => {
@@ -4871,81 +4842,81 @@ client.on('message', async msg => {
 			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wrong);
 			msg.reply(Debug('CONSOLE').wrong);
 		}
-	} else {
-		db.serialize(() => {
-			db.get("SELECT * FROM replies WHERE whats='" + isWhatsApp + "'", (err, REPLIES) => {
-				if (REPLIES == undefined) {
-					db.run("INSERT INTO replies(whats,date,count) VALUES(?, ?, ?)", [isWhatsApp, register, 1], (err) => {
+		return;
+	}
+
+	db.serialize(() => {
+		db.get("SELECT * FROM replies WHERE whats='" + isWhatsApp + "'", (err, REPLIES) => {
+			if (REPLIES == undefined) {
+				db.run("INSERT INTO replies(whats,date,count) VALUES(?, ?, ?)", [isWhatsApp, register, 1], (err) => {
+					if (err) {
+						console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
+					}
+					console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').inserted);
+					global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').inserted);
+					MsgBox = true;
+				});
+
+			} else {
+
+				if (register.toString() > REPLIES.date) {
+					db.run("UPDATE replies SET date=?, count=? WHERE whats=?", [register, 1, isWhatsApp], (err) => {
 						if (err) {
 							console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
 						}
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').inserted);
-						global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').inserted);
+						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
+						global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
 						MsgBox = true;
 					});
-
 				} else {
-
-					if (register.toString() > REPLIES.date) {
-						db.run("UPDATE replies SET date=?, count=? WHERE whats=?", [register, 1, isWhatsApp], (err) => {
-							if (err) {
-								console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-							}
+					if (Debug('OPTIONS').count > REPLIES.count) {
+						COUNT = REPLIES.count + 1;
+						db.run("UPDATE replies SET count=? WHERE whats=?", [COUNT, isWhatsApp], (err) => {
+							if (err) throw err;
 							console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
 							global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
 							MsgBox = true;
 						});
 					} else {
-						if (Debug('OPTIONS').count > REPLIES.count) {
-							COUNT = REPLIES.count + 1;
-							db.run("UPDATE replies SET count=? WHERE whats=?", [COUNT, isWhatsApp], (err) => {
-								if (err) throw err;
-								console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
-								global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
-								MsgBox = true;
-							});
-						} else {
-							console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').found);
-							global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').found);
-							MsgBox = false;
+						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').found);
+						global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').found);
+						MsgBox = false;
 
-						}
 					}
 				}
-			});
-
-			db.get("SELECT * FROM replies WHERE whats='" + msg.from.replaceAll('@c.us', '') + "'", (err, REPLIES) => {
-				if (err) {
-					console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-				}
-				if (REPLIES != undefined) {
-					if (MsgBox && Boolean(Debug('OPTIONS').onbot) && (msg.body != null || msg.body == "0" || msg.type == 'ptt' || msg.hasMedia)) {
-						if (Boolean(Debug('OPTIONS').replyes)) {
-							msg.reply(Debug('OPTIONS').response);
-						} else {
-							const Mensagem = (Debug('OPTIONS').response).replaceAll("\\n", "\r\n").split("##");
-							Mensagem.some(function(Send, index) {
-								setTimeout(function() {
-									client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
-										console.log(err);
-										WwjsVersion(false);
-									});
-
-								}, Math.floor(Delay + Math.random() * 1000));
-
-							});
-
-						}
-					}
-				}
-			});
-
+			}
 		});
-	}
+
+		db.get("SELECT * FROM replies WHERE whats='" + isWhatsApp + "'", (err, REPLIES) => {
+			if (err) {
+				console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
+			}
+			if (REPLIES != undefined) {
+				if (MsgBox && Boolean(Debug('OPTIONS').onbot) && (msg.body != null || msg.body == "0" || msg.type == 'ptt' || msg.hasMedia)) {
+					if (Boolean(Debug('OPTIONS').replyes)) {
+						msg.reply(Debug('OPTIONS').response);
+					} else {
+						const Mensagem = (Debug('OPTIONS').response).replaceAll("\\n", "\r\n").split("##");
+						Mensagem.some(function(Send, index) {
+							setTimeout(function() {
+								client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
+									console.log(err);
+									WwjsVersion(false);
+								});
+							}, Math.floor(Delay + Math.random() * 1000));
+						});
+					}
+				}
+			}
+		});
+
+	});
 });
 
+
+
 client.on('call', async (call) => {
-	var isWid = call.from;
+	var isWid = (call.from || '').split('@')[0];
 	const RegEx = new Set("!@#:$%^&*()_");
 	for (let Return of isWid) {
 		if (RegEx.has(Return)) {
@@ -4953,17 +4924,8 @@ client.on('call', async (call) => {
 		}
 	}
 	isWid = isWid.split("%")[0];
-	const isDDI = isWid.substr(0, 2);
-	const isDDD = isWid.substr(2, 2);
-	const isCall = isWid.slice(-8);
-	var WhatsApp = isWid + '@c.us';
-	if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-		WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-	} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-		WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
-	}
+	var WhatsApp = call.from;
 	const Mensagem = (Debug('OPTIONS').call).replaceAll("\\n", "\r\n").split("##");
-
 	if (Boolean(Debug('OPTIONS').reject)) {
 		setTimeout(function() {
 			call.reject().then(() => {
@@ -4974,7 +4936,6 @@ client.on('call', async (call) => {
 								console.log(err);
 								WwjsVersion(false);
 							});
-
 						}, Math.floor(Delay + Math.random() * 1000));
 					});
 				}
@@ -4984,6 +4945,7 @@ client.on('call', async (call) => {
 		}, Math.floor(Debug('OPTIONS').sleep + Math.random() * 1000));
 	}
 });
+
 
 client.initialize();
 console.log("\nAPI is Ready!\n");
