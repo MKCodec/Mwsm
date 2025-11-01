@@ -59,8 +59,8 @@ RUN python3 -m venv /opt/venv && \
       "numpy<2" \
       "filelock<3.13.0" \
       "typing-extensions<4.6.0" \
-      "torch==2.1.0+cpu" \
-      "torchvision==0.16.0+cpu" \
+      "torch==2.1.0" \
+      "torchvision==0.16.0" \
       -f https://download.pytorch.org/whl/cpu && \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
     /opt/venv/bin/pip install --no-cache-dir \
@@ -69,7 +69,6 @@ RUN python3 -m venv /opt/venv && \
       "safetensors==0.3.1" \
       "huggingface_hub==0.10.1" \
       "sentence-transformers==2.2.2"
-
 
 # =========================
 # 🚀 Etapa 2: Runtime
