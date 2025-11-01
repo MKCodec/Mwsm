@@ -6,29 +6,31 @@ FROM node:20.19.1-bookworm-slim AS builder
 WORKDIR /var/api/Mwsm
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Sao_Paulo
-ENV LANG=pt_BR.UTF-8
-ENV LC_ALL=pt_BR.UTF-8
 
 # -----------------------------------------------------------------
-# Instala dependências essenciais + Rust
+# Instala dependências essenciais + Rust (necessário p/ tokenizers)
 # -----------------------------------------------------------------
 RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
+    apt-get install -y \
       git curl wget unzip build-essential pkg-config \
       python3 python3-dev python3-pip python3-venv \
       rustc cargo \
       chromium chromium-driver \
-      sqlite3 jq ca-certificates openssl fontconfig locales \
-      fonts-dejavu fonts-liberation \
+      sqlite3 jq ca-certificates openssl lsb-release \
+      fonts-dejavu fonts-liberation fontconfig locales \
       libgomp1 libopenblas-dev liblapack-dev \
       libxshmfence1 libgbm1 libxkbcommon0 libdrm2 \
-      libasound2 libpulse0 libcairo2 libpango1.0-0 \
-      libpangocairo-1.0-0 libappindicator3-1 libatk-bridge2.0-0 \
-      libatk1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
-      libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 \
-      libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils dbus && \
-    locale-gen pt_BR.UTF-8 && \
+      libasound2 libpulse0 \
+      libcairo2 libpango1.0-0 libpangocairo-1.0-0 \
+      libappindicator3-1 libatk-bridge2.0-0 libatk1.0-0 \
+      libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
+      libxcursor1 libxdamage1 libxext6 libxfixes3 \
+      libxi6 libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils dbus \
+    && locale-gen pt_BR.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
+
+ENV LANG=pt_BR.UTF-8
+ENV LC_ALL=pt_BR.UTF-8
 
 # -----------------------------------------------------------------
 # Clone do repositório (raso)
@@ -36,39 +38,22 @@ RUN apt-get update && apt-get upgrade -y && \
 RUN git clone --depth 1 https://github.com/MKCodec/Mwsm.git .
 
 # -----------------------------------------------------------------
-# Instala dependências Node.js
+# Instala dependências Node.js (mantendo versões do package.json)
 # -----------------------------------------------------------------
 RUN npm install --no-audit --no-fund
 
 # -----------------------------------------------------------------
-# ⚙️ Aplica patch no WhatsApp Web.js
-# -----------------------------------------------------------------
-RUN FILE="/var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js"; \
-    if [ -f "$FILE" ]; then \
-        sed -i 's/() => false/() => true/' "$FILE"; \
-    fi
-
-# -----------------------------------------------------------------
-# Ambiente Python (fixo, compatível com Debian Bookworm / Python 3.11)
+# Ambiente virtual Python com versões fixas
 # -----------------------------------------------------------------
 RUN python3 -m venv /opt/venv && \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
+    /opt/venv/bin/pip install --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir \
-      "numpy<2" \
-      "filelock<3.13.0" \
-      "typing-extensions<4.6.0" \
-      "torch==2.1.0" \
-      "torchvision==0.16.0" \
-      -f https://download.pytorch.org/whl/cpu && \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_USER_ACTION=ignore \
-    /opt/venv/bin/pip install --no-cache-dir \
-      "flask==2.2.5" \
-      "transformers==4.25.1" \
-      "safetensors==0.3.1" \
-      "huggingface_hub==0.10.1" \
-      "sentence-transformers==2.2.2"
+      flask==2.2.5 \
+      sentence-transformers==2.2.2 \
+      huggingface_hub==0.10.1 \
+      torch torchvision \
+      --extra-index-url https://download.pytorch.org/whl/cpu
+
 
 # =========================
 # 🚀 Etapa 2: Runtime
@@ -95,8 +80,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 libappindicator3-1 libatk-bridge2.0-0 \
     libatk1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
     libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 \
-    libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils dbus && \
-  locale-gen pt_BR.UTF-8 && \
+    libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils dbus \
+  && locale-gen pt_BR.UTF-8 && \
   ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime && \
   rm -rf /var/lib/apt/lists/*
 
@@ -107,7 +92,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /var/api/Mwsm /var/api/Mwsm
 
 # -----------------------------------------------------------------
-# Instala PM2 e define o entrypoint
+# PM2 para gerenciar processos
 # -----------------------------------------------------------------
 RUN npm install -g pm2 --silent --no-audit --no-fund
 
