@@ -33,32 +33,33 @@ fix_wwjs() {
   local STORE_FILE="${BASE_PATH}/Store.js"
   local UTILS_FILE="${BASE_PATH}/Utils.js"
 
-  if [ -f "$STORE_FILE" ]; then
+  if [ -f "$STORE_FILE" ] && grep -q '() => false' "$STORE_FILE"; then
     sed -i 's/() => false/() => true/' "$STORE_FILE"
   fi
 
-if [ -f "$UTILS_FILE" ]; then
-  sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
-  window.WWebJS.rejectCall = async (peerJid, id) => {\n\
-      let userId = window.Store.User.getMaybeMePnUser()._serialized;\n\
-      const stanza = window.Store.SocketWap.wap("call", {\n\
-          id: window.Store.SocketWap.generateId(),\n\
-          from: userId,\n\
-          to: peerJid,\n\
-      }, [\n\
-          window.Store.SocketWap.wap("reject", {\n\
-              "call-id": id,\n\
-              "call-creator": peerJid,\n\
-              count: "0",\n\
-          })\n\
-      ]);\n\
-      await window.Store.Socket.deprecatedCastStanza(stanza);\n\
-      if (window.Store.Call && window.Store.Call.activeCall) {\n\
-          window.Store.Call.endCall();\n\
-      }\n\
-  };' "$UTILS_FILE"
-fi
+  if [ -f "$UTILS_FILE" ] && ! grep -q 'window.Store.Call.endCall' "$UTILS_FILE"; then
+    sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
+    window.WWebJS.rejectCall = async (peerJid, id) => {\
+        let userId = window.Store.User.getMaybeMePnUser()._serialized;\
+        const stanza = window.Store.SocketWap.wap("call", {\
+            id: window.Store.SocketWap.generateId(),\
+            from: userId,\
+            to: peerJid,\
+        }, [\
+            window.Store.SocketWap.wap("reject", {\
+                "call-id": id,\
+                "call-creator": peerJid,\
+                count: "0",\
+            })\
+        ]);\
+        await window.Store.Socket.deprecatedCastStanza(stanza);\
+        if (window.Store.Call && window.Store.Call.activeCall) {\
+            window.Store.Call.endCall();\
+        }\
+    };' "$UTILS_FILE"
+  fi
 }
+
 
 # ===============================
 # Diretórios dinâmicos globais
