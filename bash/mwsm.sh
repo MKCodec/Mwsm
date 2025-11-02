@@ -633,7 +633,7 @@ run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "C
         run_step "node -v && npm -v" "Verificando Node.js e NPM" install
       fi
 
-      run_step 'fix_wwjs' "Aplicando correções no WhatsApp Web JS" install
+      run_step 'fix_wwjs' "Aplicando correções no Wwjs" install
 
       # -------------------------
       # Instalação e atualização do PM2
@@ -888,7 +888,7 @@ Setup_Mwsm
 
   run_step "$SUDO npm install --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
 
-      run_step 'fix_wwjs' "Aplicando correções no WhatsApp Web JS" update
+      run_step 'fix_wwjs' "Aplicando correções no Wwjs" update
 
 # -------------------------
 # 🐍 Atualização Python + Pip + Libs
