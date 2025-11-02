@@ -37,24 +37,27 @@ fix_wwjs() {
     sed -i 's/() => false/() => true/' "$STORE_FILE"
   fi
 
-  if [ -f "$UTILS_FILE" ]; then
-    sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
-    window.WWebJS.rejectCall = async (peerJid, id) => {\n\
-        let userId = window.Store.User.getMaybeMePnUser()._serialized;\n\
-        const stanza = window.Store.SocketWap.wap("call", {\n\
-            id: window.Store.SocketWap.generateId(),\n\
-            from: userId,\n\
-            to: peerJid,\n\
-        }, [\n\
-            window.Store.SocketWap.wap("reject", {\n\
-                "call-id": id,\n\
-                "call-creator": peerJid,\n\
-                count: "0",\n\
-            })\n\
-        ]);\n\
-        await window.Store.Socket.deprecatedCastStanza(stanza);\n\
-    };' "$UTILS_FILE"
-  fi
+if [ -f "$UTILS_FILE" ]; then
+  sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
+  window.WWebJS.rejectCall = async (peerJid, id) => {\n\
+      let userId = window.Store.User.getMaybeMePnUser()._serialized;\n\
+      const stanza = window.Store.SocketWap.wap("call", {\n\
+          id: window.Store.SocketWap.generateId(),\n\
+          from: userId,\n\
+          to: peerJid,\n\
+      }, [\n\
+          window.Store.SocketWap.wap("reject", {\n\
+              "call-id": id,\n\
+              "call-creator": peerJid,\n\
+              count: "0",\n\
+          })\n\
+      ]);\n\
+      await window.Store.Socket.deprecatedCastStanza(stanza);\n\
+      if (window.Store.Call && window.Store.Call.activeCall) {\n\
+          window.Store.Call.endCall();\n\
+      }\n\
+  };' "$UTILS_FILE"
+fi
 }
 
 # ===============================
