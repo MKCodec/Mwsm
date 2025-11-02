@@ -37,7 +37,7 @@ fix_wwjs() {
     sed -i 's/() => false/() => true/' "$STORE_FILE"
   fi
 
-  if [ -f "$UTILS_FILE" ] && ! grep -q 'window.Store.Call.endCall' "$UTILS_FILE"; then
+  if [ -f "$UTILS_FILE" ] && grep -q 'window.Store.SocketWap.USER_JID' "$UTILS_FILE"; then
     sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
     window.WWebJS.rejectCall = async (peerJid, id) => {\
         let userId = window.Store.User.getMaybeMePnUser()._serialized;\
