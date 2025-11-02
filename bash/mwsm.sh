@@ -28,6 +28,35 @@ pause_and_restore() {
   tput civis >/dev/null 2>&1 || true
 }
 
+fix_wwjs() {
+  local BASE_PATH="/var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected"
+  local STORE_FILE="${BASE_PATH}/Store.js"
+  local UTILS_FILE="${BASE_PATH}/Utils.js"
+
+  if [ -f "$STORE_FILE" ]; then
+    sed -i 's/() => false/() => true/' "$STORE_FILE"
+  fi
+
+  if [ -f "$UTILS_FILE" ]; then
+    sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
+    window.WWebJS.rejectCall = async (peerJid, id) => {\n\
+        let userId = window.Store.User.getMaybeMePnUser()._serialized;\n\
+        const stanza = window.Store.SocketWap.wap("call", {\n\
+            id: window.Store.SocketWap.generateId(),\n\
+            from: userId,\n\
+            to: peerJid,\n\
+        }, [\n\
+            window.Store.SocketWap.wap("reject", {\n\
+                "call-id": id,\n\
+                "call-creator": peerJid,\n\
+                count: "0",\n\
+            })\n\
+        ]);\n\
+        await window.Store.Socket.deprecatedCastStanza(stanza);\n\
+    };' "$UTILS_FILE"
+  fi
+}
+
 # ===============================
 # Diretórios dinâmicos globais
 # ===============================
@@ -444,7 +473,6 @@ run_step "$SUDO bash -c '
 # 🐍 Python + Pip + Libs
 # -------------------------
 
-# Detecta se o pip suporta --break-system-packages (compatibilidade entre versões)
 if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
   PIP_BREAK_OPT="--break-system-packages"
 else
@@ -515,7 +543,6 @@ else
 fi
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-  # --- Compatibilidade Devuan (simples, sem sobreposição) ---
   run_step "
     command -v pip3 >/dev/null 2>&1 || $SUDO apt install -y python3-pip >/dev/null 2>&1
     for pkg in flask sentence-transformers huggingface_hub; do
@@ -524,7 +551,6 @@ if [[ "$DISTRO_DETECT" == "devuan" ]]; then
     done
   " 'Verificando integridade Python' install
 else
-  # --- Compatibilidade Debian/Ubuntu ---
   run_step "
     command -v pip3 >/dev/null 2>&1 || $SUDO apt install -y python3-pip >/dev/null 2>&1
     for pkg in flask sentence-transformers huggingface_hub; do
@@ -607,10 +633,7 @@ run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "C
         run_step "node -v && npm -v" "Verificando Node.js e NPM" install
       fi
 
-
-if [ -f /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js ]; then
-    run_step '$SUDO sed -i "s/() => false/() => true/" /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js' "Aplicando compatibilidade wwjs" update
-fi
+      run_step 'fix_wwjs' "Aplicando correções no WhatsApp Web JS" install
 
       # -------------------------
       # Instalação e atualização do PM2
@@ -865,16 +888,12 @@ Setup_Mwsm
 
   run_step "$SUDO npm install --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
 
-if [ -f /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js ]; then
-    run_step '$SUDO sed -i "s/() => false/() => true/" /var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected/Store.js' "Aplicando compatibilidade wwjs" update
-fi
-
+      run_step 'fix_wwjs' "Aplicando correções no WhatsApp Web JS" update
 
 # -------------------------
 # 🐍 Atualização Python + Pip + Libs
 # -------------------------
 
-# Detecta se o pip suporta --break-system-packages (compatibilidade entre versões)
 if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
   PIP_BREAK_OPT="--break-system-packages"
 else
@@ -1048,6 +1067,13 @@ uninstall() {
     run_step "rm -rf $BASE_DIR" "Limpando diretórios" uninstall || UNINSTALL_FAILED=true
   else
     run_step "skip" "Limpando diretórios" uninstall
+  fi
+
+  # Removendo link do comando mwsm
+  if [ -L /usr/local/bin/mwsm ] || [ -f /usr/local/bin/mwsm ]; then
+    run_step "$SUDO rm -f /usr/local/bin/mwsm" "Removendo comando mwsm" uninstall || UNINSTALL_FAILED=true
+  else
+    run_step "skip" "Removendo comando mwsm" uninstall
   fi
 
   if [ "$NO_PAUSE" = false ]; then
