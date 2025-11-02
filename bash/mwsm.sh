@@ -53,7 +53,6 @@ fix_wwjs() {
             })\
         ]);\
         await window.Store.Socket.deprecatedCastStanza(stanza);\
-        await window.Store.Call.endCall();\
     };' "$UTILS_FILE"
   fi
 }
