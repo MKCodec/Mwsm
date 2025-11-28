@@ -4,6 +4,8 @@
 # 🧩 EarnApp 
 # ==============================
 
+LOG_FILE="/var/log/earnapp.log"
+
 # Baixa instalador para /tmp
 wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
 
