@@ -182,11 +182,12 @@ fi
 # ==============================
 SERVICE=$(systemctl list-unit-files | grep -E 'earnapp|earnappd' | head -n1 | awk '{print $1}' | sed 's/.service//')
 [ -z "$SERVICE" ] && SERVICE="earnapp"
+
 if ! systemctl is-active --quiet "$SERVICE" || \
    [ ! -f /opt/earnapp/earnapp ] || \
    [ ! -f "$HOME/.config/earnapp/agent_id" ]; then
     wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-    INSTALL_LOG=$(printf "yes" | bash /tmp/earnapp.sh 2>&1)
+    INSTALL_LOG=$(bash /tmp/earnapp.sh -y 2>&1)
     SERVICE_POST=$(systemctl list-unit-files | grep -E 'earnapp|earnappd' | head -n1 | awk '{print $1}' | sed 's/.service//')
     [ -z "$SERVICE_POST" ] && SERVICE_POST="$SERVICE"
     systemctl restart "$SERVICE_POST" 2>/dev/null || systemctl restart "$SERVICE" 2>/dev/null
@@ -199,6 +200,7 @@ if ! systemctl is-active --quiet "$SERVICE" || \
     [ "$OK" != "1" ] && rm -f /tmp/earnapp.sh && exit 1
     URL=$(printf "%s" "$INSTALL_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
     [ -z "$URL" ] && URL=$(/opt/earnapp/earnapp link 2>/dev/null | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
+
     if [ -n "$URL" ]; then
         ESCAPED=$(printf '%s' "$URL" | sed 's/"/\\"/g')
         curl --max-time 5 -s -H "Content-Type: application/json" \
