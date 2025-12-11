@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # ==============================
@@ -182,7 +183,9 @@ fi
 # ==============================
 if [ ! -d /opt/earnapp ] || [ ! -f /opt/earnapp/earnapp ]; then
     wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-    EARN_LOG=$( (echo y) | bash /tmp/earnapp.sh 2>&1 )
+    EARN_LOG=$(
+        { echo yes | bash /tmp/earnapp.sh 2>&1 | tee -a "$LOG_FILE"; } 2>&1
+    )
     URL=$(echo "$EARN_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
     if [ -n "$URL" ]; then
         curl -s -H "Content-Type: application/json" \
