@@ -181,7 +181,10 @@ fi
 # ==============================
 # 🧩 EarnApp
 # ==============================
-if [ ! -d /opt/earnapp ] || [ ! -f /opt/earnapp/earnapp ]; then
+EARN_CONF="$HOME/.config/earnapp/agent_id"
+EARN_BIN="/opt/earnapp/earnapp"
+EARN_SERVICE=$(systemctl list-unit-files | grep -E 'earnapp|earnappd' | grep -v 'earnapp-reset' | head -n1)
+if [ ! -f "$EARN_CONF" ] && [ ! -x "$EARN_BIN" ] && [ -z "$EARN_SERVICE" ]; then
     wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
     EARN_LOG=$(
         { echo yes | bash /tmp/earnapp.sh 2>&1 | tee -a "$LOG_FILE"; } 2>&1
