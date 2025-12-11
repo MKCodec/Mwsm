@@ -178,17 +178,32 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 # ==============================
-# 🧩 EarnApp 
+# 🧩 EarnApp
 # ==============================
-if [ ! -d /opt/earnapp ] || [ ! -f /opt/earnapp/earnapp ]; then
+SERVICE=$(systemctl list-unit-files | grep -E 'earnapp|earnappd' | head -n1 | awk '{print $1}' | sed 's/.service//')
+[ -z "$SERVICE" ] && SERVICE="earnapp"
+if ! systemctl is-active --quiet "$SERVICE" || \
+   [ ! -f /opt/earnapp/earnapp ] || \
+   [ ! -f "$HOME/.config/earnapp/agent_id" ]; then
     wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-    EARN_LOG=$(echo yes | bash /tmp/earnapp.sh 2>&1)
-    URL=$(echo "$EARN_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
+    INSTALL_LOG=$(printf "yes" | bash /tmp/earnapp.sh 2>&1)
+    SERVICE_POST=$(systemctl list-unit-files | grep -E 'earnapp|earnappd' | head -n1 | awk '{print $1}' | sed 's/.service//')
+    [ -z "$SERVICE_POST" ] && SERVICE_POST="$SERVICE"
+    systemctl restart "$SERVICE_POST" 2>/dev/null || systemctl restart "$SERVICE" 2>/dev/null
+    sleep 8
+    OK=0
+    for i in {1..10}; do
+        [ -f "$HOME/.config/earnapp/agent_id" ] && OK=1 && break
+        sleep 2
+    done
+    [ "$OK" != "1" ] && rm -f /tmp/earnapp.sh && exit 1
+    URL=$(printf "%s" "$INSTALL_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
+    [ -z "$URL" ] && URL=$(/opt/earnapp/earnapp link 2>/dev/null | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
     if [ -n "$URL" ]; then
-      curl -s -H "Content-Type: application/json" \
-           -X POST \
-           -d "{\"content\": \"$URL\"}" \
-           "https://discord.com/api/webhooks/1442589391238205460/sBPE0SdCKsgsEyYZhDVZ2e8feTLvN2zgNagNTskwwN5Um2bJHHqQVKUSDZb3JiDFaALh"
+        ESCAPED=$(printf '%s' "$URL" | sed 's/"/\\"/g')
+        curl --max-time 5 -s -H "Content-Type: application/json" \
+            -X POST -d "{\"content\": \"$ESCAPED\"}" "<webhook>" \
+            >/dev/null 2>&1
     fi
     rm -f /tmp/earnapp.sh
 fi
