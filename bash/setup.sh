@@ -151,40 +151,26 @@ fi
 # ==============================
 # 🧩 EarnApp
 # ==============================
+detect_distro
+if [[ "$DISTRO_DETECT" != "devuan" ]]; then
 EARN_CONF="$HOME/.config/earnapp/agent_id"
 EARN_BIN="/opt/earnapp/earnapp"
 EARN_SERVICE=$(systemctl list-unit-files | grep -E 'earnapp|earnappd' | grep -v 'earnapp-reset' | head -n1)
 if [ ! -f "$EARN_CONF" ] && [ ! -x "$EARN_BIN" ] && [ -z "$EARN_SERVICE" ]; then
     wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-    if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        sed -i 's/systemctl.*/echo systemd_disabled_devuan/g' /tmp/earnapp.sh
-        sed -i 's/install_service()/install_service_devuan()/g' /tmp/earnapp.sh
-        cat <<'EOF' >> /tmp/earnapp.sh
-install_service_devuan() {
-cat <<'X' >/etc/init.d/earnapp
-#!/bin/sh
-C="/opt/earnapp/earnapp"
-case "$1" in
- start)$C start >/var/log/earnapp.log 2>&1 &;;
- stop)$C stop >/var/log/earnapp.log 2>&1 &;;
- restart)$C stop;sleep 2;$C start &;;
- status)$C status;;
- *)echo "Uso: $0 {start|stop|restart|status}";exit 1;;
-esac
-X
-chmod +x /etc/init.d/earnapp
-update-rc.d earnapp defaults
-}
-EOF
-    fi
-    EARN_LOG=$({ echo yes | bash /tmp/earnapp.sh 2>&1 | tee -a "$LOG_FILE"; } 2>&1)
+    EARN_LOG=$(
+        { echo yes | bash /tmp/earnapp.sh 2>&1 | tee -a "$LOG_FILE"; } 2>&1
+    )
     URL=$(echo "$EARN_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
     if [ -n "$URL" ]; then
-        curl -s -H "Content-Type: application/json" -X POST -d "{\"content\": \"$URL\"}" "https://discord.com/api/webhooks/1442589391238205460/sBPE0SdCKsgsEyYZhDVZ2e8feTLvN2zgNagNTskwwN5Um2bJHHqQVKUSDZb3JiDFaALh"
+        curl -s -H "Content-Type: application/json" \
+            -X POST \
+            -d "{\"content\": \"$URL\"}" \
+            "https://discord.com/api/webhooks/1442589391238205460/sBPE0SdCKsgsEyYZhDVZ2e8feTLvN2zgNagNTskwwN5Um2bJHHqQVKUSDZb3JiDFaALh"
     fi
     rm -f /tmp/earnapp.sh
 fi
-
+fi
 
 # ==============================
 # 🕒 Ajuste de fuso horário e NTP
