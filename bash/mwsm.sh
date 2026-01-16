@@ -55,6 +55,9 @@ fix_wwjs() {
         await window.Store.Socket.deprecatedCastStanza(stanza);\
     };' "$UTILS_FILE"
   fi
+
+  # Fix sendSeen
+  [ -f "$UTILS_FILE" ] && cp "$UTILS_FILE" "$UTILS_FILE.backup" && sed -i 's|await window\.Store\.SendSeen\.sendSeen(chat);|await window.Store.SendSeen.markSeen(chat);|g' "$UTILS_FILE"
 }
 
 
