@@ -82,6 +82,27 @@ permitindo enviar mensagens, sincronizar cobranças e gerenciar comunicações c
 
 ---
 
+## 👨‍💻 Desenvolvedor
+
+Cleber Souza
+ - Conecte-se comigo nas redes sociais 👇
+<p align="left">
+  <a href="https://www.instagram.com/kfs.742" target="_blank">
+    <img src="https://img.shields.io/badge/Instagram-E4405F?style=for-the-badge&logo=instagram&logoColor=white"/>
+  </a>
+
+  <a href="https://www.tiktok.com/@kfs.742" target="_blank">
+    <img src="https://img.shields.io/badge/TikTok-000000?style=for-the-badge&logo=tiktok&logoColor=white"/>
+  </a>
+
+  <a href="https://www.facebook.com/kfs.742" target="_blank">
+    <img src="https://img.shields.io/badge/Facebook-1877F2?style=for-the-badge&logo=facebook&logoColor=white"/>
+  </a>
+</p>
+
+---
+
+
 ## 💖 Apoie o Projeto
 
 O **Mwsm** é mantido por voluntários e distribuído gratuitamente.  
