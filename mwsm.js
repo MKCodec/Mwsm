@@ -1214,7 +1214,7 @@ async function WwjsVersion(GET) {
 
 
 // ==================================================
-// 🧠 Inteligência Artificial
+// ðŸ§  InteligÃªncia Artificial
 // ==================================================
 
 async function getEmbedding(text) {
@@ -1241,12 +1241,12 @@ async function getEmbedding(text) {
 }
 
 // ==================================================
-// 🕒 Timezone e Cumprimentos Dinâmicos
+// ðŸ•’ Timezone e Cumprimentos DinÃ¢micos
 // ==================================================
 async function getTimezoneByUF(uf) {
 	return new Promise((resolve) => {
 		db.get("SELECT timezone FROM localzone WHERE uf = ?", [uf], (err, row) => {
-			if (err || !row) return resolve("America/Sao_Paulo"); // padrão SP
+			if (err || !row) return resolve("America/Sao_Paulo"); // padrÃ£o SP
 			resolve(row.timezone);
 		});
 	});
@@ -1268,21 +1268,21 @@ function getGreetingPeriod(timezone) {
 		if (hour >= 18 && hour < 24) return "boa noite";
 		if (hour >= 0 && hour < 5) return "boa madrugada";
 	} catch (err) {
-		console.error("[ERRO] Falha ao determinar saudação:", err);
+		console.error("[ERRO] Falha ao determinar saudaÃ§Ã£o:", err);
 		return "";
 	}
 }
 
 
 // ==================================================
-// 🔒 Filtro Temático (Palavras-chave no BD)
+// ðŸ”’ Filtro TemÃ¡tico (Palavras-chave no BD)
 // ==================================================
 async function isRelevantQuestion(text) {
 	return new Promise((resolve) => {
 		db.all("SELECT filter FROM keywords", [], (err, rows) => {
 			if (err) {
 				console.error("Keyword filter error:", err.message);
-				return resolve(true); // não bloqueia em erro
+				return resolve(true); // nÃ£o bloqueia em erro
 			}
 			if (!rows || rows.length === 0) return resolve(true);
 
@@ -1297,7 +1297,7 @@ async function isRelevantQuestion(text) {
 
 
 // ==================================================
-// 🎯 Lógica Principal da IA
+// ðŸŽ¯ LÃ³gica Principal da IA
 // ==================================================
 async function askAI(question) {
 	return new Promise(async (resolve) => {
@@ -1317,16 +1317,16 @@ async function askAI(question) {
 				const turno = getGreetingPeriod(tz);
 
 				if (turno) {
-					return resolve(`👋 Olá, ${turno}! Como posso te ajudar com sua conexão de internet?`);
+					return resolve(`ðŸ‘‹ OlÃ¡, ${turno}! Como posso te ajudar com sua conexÃ£o de internet?`);
 				} else {
-					return resolve(`👋 Olá! Como posso te ajudar com sua conexão de internet?`);
+					return resolve(`ðŸ‘‹ OlÃ¡! Como posso te ajudar com sua conexÃ£o de internet?`);
 				}
 			}
 
 			const isRelevant = await isRelevantQuestion(text);
 			if (!isRelevant) {
-				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter → Ignored.`);
-				return resolve("⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.");
+				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter â†’ Ignored.`);
+				return resolve("âš ï¸ Posso ajudar apenas com dÃºvidas sobre sua conexÃ£o de internet e suporte tÃ©cnico.");
 			}
 
 			const aiMode = parseInt(Debug('OPTIONS').aimode);
@@ -1360,7 +1360,7 @@ async function askAI(question) {
 				Level = parseInt(Regedit?.level);
 			}
 console.log(Regedit);
-			if (!Module) return resolve("⚠️ Indisponível no momento.");
+			if (!Module) return resolve("âš ï¸ IndisponÃ­vel no momento.");
 
 			const qEmbedding = await getEmbedding(question);
 			let bestMatch = null;
@@ -1394,7 +1394,7 @@ console.log(Regedit);
 			console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
 			const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 
-			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("⚠")) {
+			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("âš ")) {
 				try {
 					await enforceKnowledgeLimit();
 					const _embedding = await getEmbedding(question);
@@ -1423,13 +1423,13 @@ console.log(Regedit);
 			return resolve(aiAnswer);
 		} catch (err) {
 			console.error("IA error:", err.message || err);
-			return resolve("⚠️ Não consegui acessar a inteligência artificial no momento.");
+			return resolve("âš ï¸ NÃ£o consegui acessar a inteligÃªncia artificial no momento.");
 		}
 	});
 }
 
 // ==================================================
-// 🌐 Comunicação com API (OpenRouter) + Limite de Tentativas
+// ðŸŒ ComunicaÃ§Ã£o com API (OpenRouter) + Limite de Tentativas
 // ==================================================
 async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level = 0) {
 	const tried = [];
@@ -1452,7 +1452,7 @@ async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, 
 			});
 		}
 
-		if (!variants.length) throw new Error("⚠️ Erro ao buscar resposta da IA online.");
+		if (!variants.length) throw new Error("âš ï¸ Erro ao buscar resposta da IA online.");
 
 		const activeVariant = variants.find(v => v.active === 1);
 		const orderedVariants = activeVariant ?
@@ -1494,28 +1494,28 @@ async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, 
 
 				const aiAnswer =
 					response.data?.choices?.[0]?.message?.content?.trim() ||
-					"Desculpe, não consegui entender sua solicitação.";
+					"Desculpe, nÃ£o consegui entender sua solicitaÃ§Ã£o.";
 
 				db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
 				db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
 
-				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → ATIVA`);
+				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} â†’ ATIVA`);
 				return aiAnswer.replace(/\s+/g, " ").trim();
 			} catch (err) {
-				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → INATIVA`);
+				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} â†’ INATIVA`);
 				db.run("UPDATE engine SET active = 0 WHERE id = ?", [variant.id]);
 				continue;
 			}
 		}
 
-		return "⚠️ Erro ao buscar resposta da IA online.";
+		return "âš ï¸ Erro ao buscar resposta da IA online.";
 	} catch {
-		return "⚠️ Erro ao buscar resposta da IA online.";
+		return "âš ï¸ Erro ao buscar resposta da IA online.";
 	}
 }
 
 // ==================================================
-// 📊 Similaridade Vetorial
+// ðŸ“Š Similaridade Vetorial
 // ==================================================
 function cosineSimilarity(vecA, vecB) {
 	if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
@@ -1531,7 +1531,7 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // ==================================================
-// 🧹 Limpeza Dinâmica e Inteligente do Conhecimento
+// ðŸ§¹ Limpeza DinÃ¢mica e Inteligente do Conhecimento
 // ==================================================
 async function enforceKnowledgeLimit() {
 	try {
@@ -1554,7 +1554,7 @@ async function enforceKnowledgeLimit() {
 				[excess],
 				function(delErr) {
 					if (delErr) console.error("Cleanup error:", delErr.message);
-					else console.log(`✅ ${this.changes} registros antigos removidos.`);
+					else console.log(`âœ… ${this.changes} registros antigos removidos.`);
 				}
 			);
 		});
@@ -1564,7 +1564,7 @@ async function enforceKnowledgeLimit() {
 }
 
 // ==================================================
-// 🔹 Embedding Local (Backup Seguro)
+// ðŸ”¹ Embedding Local (Backup Seguro)
 // ==================================================
 async function getLocalEmbedding(text) {
 	return Array.from(text).map((c, i) => ((c.charCodeAt(0) + i * 7) % 255) / 255);
@@ -4670,7 +4670,7 @@ let lastGlobalRequest = 0;
 let globalQueue = Promise.resolve();
 
 // ==================================================
-// 🤖 WhatsApp Bot — Menu + IA 
+// ðŸ¤– WhatsApp Bot â€” Menu + IA 
 // ==================================================
 client.on('message', async msg => {
 	const nomeContato = msg._data.notifyName;
@@ -4693,18 +4693,18 @@ client.on('message', async msg => {
 	const isWhatsApp = isWid; 
 	if (msg.body.trim().toLowerCase() === "menu") {
 		if (activeMenus.has(msg.from)) {
-			await client.sendMessage(msg.from, "⚠️ Você já está dentro do menu.\nEnvie *0* para sair primeiro.");
+			await client.sendMessage(msg.from, "âš ï¸ VocÃª jÃ¡ estÃ¡ dentro do menu.\nEnvie *0* para sair primeiro.");
 			return;
 		}
 
 		activeMenus.set(msg.from, true);
 		await client.sendMessage(
 			msg.from,
-			'📋 *Menu Principal*\n\n' +
-			'1️⃣ Boleto\n' +
-			'2️⃣ Suporte\n' +
-			'0️⃣ Encerrar\n\n' +
-			'👉 Responda com o número da opção:'
+			'ðŸ“‹ *Menu Principal*\n\n' +
+			'1ï¸âƒ£ Boleto\n' +
+			'2ï¸âƒ£ Suporte\n' +
+			'0ï¸âƒ£ Encerrar\n\n' +
+			'ðŸ‘‰ Responda com o nÃºmero da opÃ§Ã£o:'
 		);
 		return;
 	}
@@ -4716,7 +4716,7 @@ client.on('message', async msg => {
 				if (["0", "sair", "tchau", "tchal"].includes(_iaExit)) {
 					activeSupportIA.delete(msg.from);
 					activeMenus.delete(msg.from);
-					await client.sendMessage(msg.from, "✅ Atendimento encerrado.\nObrigado pelo contato!");
+					await client.sendMessage(msg.from, "âœ… Atendimento encerrado.\nObrigado pelo contato!");
 					return;
 				}
 				if (_iaExit === "menu") {
@@ -4724,11 +4724,11 @@ client.on('message', async msg => {
 					activeMenus.set(msg.from, true);
 					await client.sendMessage(
 						msg.from,
-						'📋 *Menu Principal*\n\n' +
-						'1️⃣ Boleto\n' +
-						'2️⃣ Suporte\n' +
-						'0️⃣ Encerrar\n\n' +
-						'👉 Responda com o número da opção:'
+						'ðŸ“‹ *Menu Principal*\n\n' +
+						'1ï¸âƒ£ Boleto\n' +
+						'2ï¸âƒ£ Suporte\n' +
+						'0ï¸âƒ£ Encerrar\n\n' +
+						'ðŸ‘‰ Responda com o nÃºmero da opÃ§Ã£o:'
 					);
 					return;
 				}
@@ -4813,18 +4813,18 @@ client.on('message', async msg => {
 		}
 
 		if (msg.body.startsWith('1')) {
-			await client.sendMessage(msg.from, '🔗 Aqui está o link do seu boleto: https://seudominio.com/boleto');
+			await client.sendMessage(msg.from, 'ðŸ”— Aqui estÃ¡ o link do seu boleto: https://seudominio.com/boleto');
 			return;
 		}
 
 		if (msg.body.startsWith('2')) {
-			await client.sendMessage(msg.from, '🤖 Você está agora em atendimento de suporte com IA. Envie sua dúvida.');
+			await client.sendMessage(msg.from, 'ðŸ¤– VocÃª estÃ¡ agora em atendimento de suporte com IA. Envie sua dÃºvida.');
 			activeSupportIA.set(msg.from, true);
 			return;
 		}
 
 		if (msg.body.startsWith('0')) {
-			await client.sendMessage(msg.from, '✅ Atendimento encerrado.\nObrigado pelo contato!');
+			await client.sendMessage(msg.from, 'âœ… Atendimento encerrado.\nObrigado pelo contato!');
 			activeMenus.delete(msg.from);
 			return;
 		}
@@ -4913,46 +4913,52 @@ client.on('message', async msg => {
 	});
 });
 
+
 client.on('call', async (call) => {
-	var isWid = (call.from || '').split('@');
-	const RegEx = new Set("!@#:$%^&*()_");
-	for (let Return of isWid) {
-		if (RegEx.has(Return)) {
-			isWid = isWid.replace(Return, '%');
-		}
-	}
-	isWid = isWid.split("%");
-	var WhatsApp = call.from;
-	const Mensagem = (Debug('OPTIONS').call).replaceAll("\\n", "\r\n").split("##");
+    var isWid = (call.from || '').split('@')[0];
+    const RegEx = new Set("!@#:$%^&*()_");
+    for (let Return of isWid) {
+        if (RegEx.has(Return)) {
+            isWid = isWid.replace(Return, '%');
+        }
+    }
+    isWid = isWid.split("%")[0];
+    var WhatsApp = call.from;
 
-	if (Boolean(Debug('OPTIONS').reject)) {
-		setTimeout(function() {
-			call.reject().then(function() {
-				enviarAlerta();
-			}).catch(function(err) {
-				client.pupPage.evaluate(function(peerJid, id) {
-					return window.WWebJS.rejectCall(peerJid, id);
-				}, call.from, call.id).then(function() {
-					enviarAlerta();
-				}).catch(function(e) {
-				});
-			});
-		}, Math.floor(Debug('OPTIONS').sleep + Math.random() * 1000));
-	}
+    if (Boolean(Debug('OPTIONS').reject)) {
 
-	function enviarAlerta() {
-		if (Boolean(Debug('OPTIONS').alert)) {
-			Mensagem.some(function(Send, index) {
-				setTimeout(function() {
-					client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
-						WwjsVersion(false);
-					});
-				}, Math.floor(Delay + Math.random() * 1000) * (index + 1));
-			});
-		}
-	}
+        const sleepTime = Math.floor(Debug('OPTIONS').sleep + Math.random() * 1000);
+
+        setTimeout(async () => {
+            try {
+                await call.reject();
+                enviarAlertaCall();
+            } catch (err) {
+                
+                try {
+                    await client.pupPage.evaluate((id) => {
+                        window.WWebJS.rejectCall(id);
+                    }, call.id);
+                    enviarAlertaCall();
+                } catch (e) {
+                }
+            }
+        }, sleepTime);
+    }
+
+    function enviarAlertaCall() {
+        if (Boolean(Debug('OPTIONS').alert)) {
+            const Mensagem = (Debug('OPTIONS').call).replaceAll("\\n", "\r\n").split("##");
+            Mensagem.some(function(Send, index) {
+                setTimeout(function() {
+                    client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
+                        if (typeof WwjsVersion === 'function') WwjsVersion(false);
+                    });
+                }, Math.floor(Delay + Math.random() * 1000) * (index + 1));
+            });
+        }
+    }
 });
-
 
 client.initialize();
 console.log("\nAPI is Ready!\n");
