@@ -4,7 +4,7 @@
   "description": "Bot-Mwsm: based on Whatsapp API",
   "main": "mwsm.js",
   "scripts": {
-    "update:wa": "npm install whatsapp-web.js@latest --silent --no-audit --no-fund",
+    "update:wa": "npm install github:pedroslopez/whatsapp-web.js#main --silent --no-audit --no-fund",
     "prestart": "npm run update:wa",
     "start": "node mwsm.js",
     "start:dev": "nodemon mwsm.js",
@@ -48,7 +48,7 @@
     "sqlite3": "^5.1.7",
     "Url2PDF": "git+https://github.com/MKCodec/Url2PDF",
     "util": "^0.12.5",
-    "whatsapp-web.js": "latest"
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
