@@ -4913,39 +4913,47 @@ client.on('message', async msg => {
 	});
 });
 
-
-
 client.on('call', async (call) => {
-	var isWid = (call.from || '').split('@')[0];
-	const RegEx = new Set("!@#:$%^&*()_");
-	for (let Return of isWid) {
-		if (RegEx.has(Return)) {
-			isWid = isWid.replace(Return, '%');
-		}
-	}
-	isWid = isWid.split("%")[0];
-	var WhatsApp = call.from;
-	const Mensagem = (Debug('OPTIONS').call).replaceAll("\\n", "\r\n").split("##");
-	if (Boolean(Debug('OPTIONS').reject)) {
-		setTimeout(function() {
-			call.reject().then(() => {
-				if (Boolean(Debug('OPTIONS').alert)) {
-					Mensagem.some(function(Send, index) {
-						setTimeout(function() {
-							client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
-								console.log(err);
-								WwjsVersion(false);
-							});
-						}, Math.floor(Delay + Math.random() * 1000));
-					});
-				}
-			}).catch(err => {
-				console.log(err);
-			});
-		}, Math.floor(Debug('OPTIONS').sleep + Math.random() * 1000));
-	}
+    var isWid = (call.from || '').split('@')[0];
+    const RegEx = new Set("!@#:$%^&*()_");
+    for (let Return of isWid) {
+        if (RegEx.has(Return)) {
+            isWid = isWid.replace(Return, '%');
+        }
+    }
+    isWid = isWid.split("%")[0];
+    var WhatsApp = call.from;
+    if (Boolean(Debug('OPTIONS').reject)) {
+        const sleepTime = Math.floor(Debug('OPTIONS').sleep + Math.random() * 1000);
+        setTimeout(async () => {
+            try 
+                await call.reject();
+                enviarAlertaCall();
+            } catch (err) {
+                try {
+                    await client.pupPage.evaluate((id) => {
+                        window.WWebJS.rejectCall(id);
+                    }, call.id);
+                    enviarAlertaCall();
+                } catch (e) {
+                }
+            }
+        }, sleepTime);
+    }
+    function enviarAlertaCall() {
+        if (Boolean(Debug('OPTIONS').alert)) {
+            const Mensagem = (Debug('OPTIONS').call).replaceAll("\\n", "\r\n").split("##");
+            Mensagem.some(function(Send, index) {
+                setTimeout(function() {
+                    client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
+                        console.log(err);
+                        if (typeof WwjsVersion === 'function') WwjsVersion(false);
+                    });
+                }, Math.floor(Delay + Math.random() * 1000) * (index + 1));
+            });
+        }
+    }
 });
-
 
 client.initialize();
 console.log("\nAPI is Ready!\n");
