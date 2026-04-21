@@ -28,6 +28,7 @@ pause_and_restore() {
   tput civis >/dev/null 2>&1 || true
 }
 
+
 fix_wwjs() {
   local BASE_PATH="/var/api/Mwsm/node_modules/whatsapp-web.js/src/util/Injected"
   local STORE_FILE="${BASE_PATH}/Store.js"
@@ -37,24 +38,24 @@ fix_wwjs() {
     sed -i 's/() => false/() => true/' "$STORE_FILE"
   fi
 
-  if [ -f "$UTILS_FILE" ] && grep -q 'window.Store.SocketWap.USER_JID' "$UTILS_FILE"; then
-    sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
-    window.WWebJS.rejectCall = async (peerJid, id) => {\
-        let userId = window.Store.User.getMaybeMePnUser()._serialized;\
-        const stanza = window.Store.SocketWap.wap("call", {\
-            id: window.Store.SocketWap.generateId(),\
-            from: userId,\
-            to: peerJid,\
-        }, [\
-            window.Store.SocketWap.wap("reject", {\
-                "call-id": id,\
-                "call-creator": peerJid,\
-                count: "0",\
-            })\
-        ]);\
-        await window.Store.Socket.deprecatedCastStanza(stanza);\
-    };' "$UTILS_FILE"
-  fi
+  # if [ -f "$UTILS_FILE" ] && grep -q 'window.Store.SocketWap.USER_JID' "$UTILS_FILE"; then
+  #   sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
+  #   window.WWebJS.rejectCall = async (peerJid, id) => {\
+  #       let userId = window.Store.User.getMaybeMePnUser()._serialized;\
+  #       const stanza = window.Store.SocketWap.wap("call", {\
+  #           id: window.Store.SocketWap.generateId(),\
+  #           from: userId,\
+  #           to: peerJid,\
+  #       }, [\
+  #           window.Store.SocketWap.wap("reject", {\
+  #               "call-id": id,\
+  #               "call-creator": peerJid,\
+  #               count: "0",\
+  #           })\
+  #       ]);\
+  #       await window.Store.Socket.deprecatedCastStanza(stanza);\
+  #   };' "$UTILS_FILE"
+  # fi
 
   # Fix sendSeen
   [ -f "$UTILS_FILE" ] && cp "$UTILS_FILE" "$UTILS_FILE.backup" && sed -i 's|await window\.Store\.SendSeen\.sendSeen(chat);|await window.Store.SendSeen.markSeen(chat);|g' "$UTILS_FILE"
