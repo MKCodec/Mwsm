@@ -1042,7 +1042,7 @@ uninstall() {
     detect_distro
 
     if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-      run_step "crontab -l 2>/dev/null | grep -v '$BASE_DIR/mwsm.js' | crontab -" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
+      run_step "crontab -l 2>/dev/null | grep -Fv 'cd $BASE_DIR && npm run start:mkauth' | crontab -" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
     else
       run_step "$SUDO pm2 unstartup systemd" "Removendo inicialização" uninstall || UNINSTALL_FAILED=true
     fi
