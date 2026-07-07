@@ -667,7 +667,7 @@ fi
       # Inicialização dos serviços
       # -------------------------
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        run_step "$SUDO sh -c 'crontab -l 2>/dev/null | grep -v \"$BASE_DIR/mwsm.js\"; echo \"@reboot cd $BASE_DIR && npm run start:mkauth\"' | crontab -" "Configurando inicialização" install
+        run_step "$SUDO bash -c 'CRON_JOB=\"@reboot cd $BASE_DIR && npm run start:mkauth\"; crontab -l 2>/dev/null | grep -Fxq \"\$CRON_JOB\" || { (crontab -l 2>/dev/null; echo \"\$CRON_JOB\") | crontab -; }'" "Configurando inicialização" install
         run_step "$SUDO npm run setup:mkauth" "Iniciando serviços" install
       else
         run_step "$SUDO npm run setup:mwsm" "Iniciando serviços" install
@@ -973,7 +973,7 @@ fi
   run_step "migrate_mwsm" "Importando dados Mwsm" update
 
   if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    run_step "$SUDO sh -c 'crontab -l 2>/dev/null | grep -v \"$BASE_DIR/mwsm.js\"; echo \"@reboot cd $BASE_DIR && npm run start:mkauth\"' | crontab -" "Configurando inicialização" update
+    run_step "$SUDO bash -c 'CRON_JOB=\"@reboot cd $BASE_DIR && npm run start:mkauth\"; crontab -l 2>/dev/null | grep -Fxq \"\$CRON_JOB\" || { (crontab -l 2>/dev/null; echo \"\$CRON_JOB\") | crontab -; }'" "Configurando inicialização" update
     run_step "$SUDO npm run setup:mkauth" "Reiniciando serviços" update
 
   else
