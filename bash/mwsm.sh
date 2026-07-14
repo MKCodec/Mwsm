@@ -885,10 +885,10 @@ Setup_Mwsm
   # Use precise detection for update branches if needed
   detect_distro
 
-  if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    run_step "$SUDO npm install -g npm@latest node-gyp@latest --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
+if [[ "$DISTRO_DETECT" == "devuan" ]]; then
+    run_step "$SUDO npm install -g npm@latest node-gyp@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
   else
-    run_step "$SUDO npm install -g npm@latest --silent --no-audit --no-fund" "Atualizando npm" update
+    run_step "$SUDO npm install -g npm@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm" update
   fi
 
   run_step "$SUDO npm install --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
