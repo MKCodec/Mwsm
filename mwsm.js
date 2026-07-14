@@ -1359,7 +1359,6 @@ async function askAI(question) {
 				Module = Regedit?.module || null;
 				Level = parseInt(Regedit?.level);
 			}
-console.log(Regedit);
 			if (!Module) return resolve("âš ï¸ IndisponÃ­vel no momento.");
 
 			const qEmbedding = await getEmbedding(question);
@@ -1585,6 +1584,7 @@ const MkAuth = async (UID, FIND, EXT = 'titulos', TYPE = 'titulo', MODE = true) 
 		JSON = [],
 		Json = undefined,
 		JDebug = undefined,
+		Owner = Boolean(Debug('MKAUTH').owner),
 		Jump;
 	var Server = Debug('MKAUTH').client_link;
 
@@ -1715,7 +1715,7 @@ const MkAuth = async (UID, FIND, EXT = 'titulos', TYPE = 'titulo', MODE = true) 
 								Json = {
 									"Status": STATUS,
 									"ID": Send.titulo,
-									"Name": Send.nome,
+									"Name": Owner ? Send.nome_res : Send.nome,
 									"Payments": [{
 											"value": Send.linhadig,
 											"caption": "Bar",
@@ -1819,7 +1819,7 @@ const MkAuth = async (UID, FIND, EXT = 'titulos', TYPE = 'titulo', MODE = true) 
 							Json = {
 								"Order": (new Date(Send.datavenc)).getDate(),
 								"Identifier": Send.titulo,
-								"Client": Send.nome,
+								"Client": Owner ? Send.nome_res : Send.nome,
 								"Reward": Send.datavenc,
 								"Payment": Send.status,
 								"Connect": Send.login,
