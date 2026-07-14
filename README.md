@@ -2,10 +2,10 @@
 
 <p align="center">
   <a href="javascript:void(0)">
-    <img src="https://img.shields.io/badge/Build-3.0.6-blue?style=for-the-badge" alt="Badge">
+    <img src="https://img.shields.io/badge/Build-3.0.7-blue?style=for-the-badge" alt="Badge">
   </a>
   <a href="javascript:void(0)">
-    <img src="https://img.shields.io/badge/Update-13%2F07%2F2026%2022:25-green?style=for-the-badge" alt="Badge">
+    <img src="https://img.shields.io/badge/Update-13%2F07%2F2026%2023:34-green?style=for-the-badge" alt="Badge">
   </a>
   <a href="https://github.com/MKCodec/Mwsm">
     <img src="https://img.shields.io/github/stars/MKCodec/Mwsm?style=for-the-badge" alt="Badge">
