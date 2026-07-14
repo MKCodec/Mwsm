@@ -601,13 +601,13 @@ $SUDO chown -R "$CURRENT_USER":"$CURRENT_USER" "$BASE_DIR"
       # -------------------------
 cd $BASE_DIR || return
 run_step "node -v >/dev/null 2>&1" "Verificando instalação do Node.js" install
-run_step "$SUDO npm install -g npm@latest --quiet --no-progress" "Atualizando NPM" install
+run_step "$SUDO npm install --unsafe-perm -g npm@latest --quiet --no-progress" "Atualizando NPM" install
 run_step "$SUDO npm cache clean --force >/dev/null 2>&1" "Limpando cache NPM" install
 run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "Configurando registro NPM" install
 
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        run_step "$SUDO npm install -g npm@latest node-gyp@latest" "Atualizando npm e node-gyp" install
-        run_step "$SUDO npm install --silent --no-fund --no-audit" "Instalando dependências Node" install
+        run_step "$SUDO npm install --unsafe-perm -g npm@latest node-gyp@latest" "Atualizando npm e node-gyp" install
+        run_step "$SUDO npm install --unsafe-perm --silent --no-fund --no-audit" "Instalando dependências Node" install
         command -v node >/dev/null 2>&1 || $SUDO ln -sf /usr/bin/nodejs /usr/bin/node
         run_step "node -v && npm -v" "Verificando Node.js e NPM" install
 
@@ -633,7 +633,7 @@ run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "C
         fi
 
       else
-        run_step "$SUDO npm install --silent --no-fund --no-audit" "Instalando dependências Node" install
+        run_step "$SUDO npm install --unsafe-perm --silent --no-fund --no-audit" "Instalando dependências Node" install
         command -v node >/dev/null 2>&1 || $SUDO ln -sf /usr/bin/nodejs /usr/bin/node
         run_step "node -v && npm -v" "Verificando Node.js e NPM" install
       fi
@@ -649,7 +649,7 @@ if command -v pm2 >/dev/null 2>&1; then
 
   if [[ -n "$LATEST_PM2_VERSION" && "$CURRENT_PM2_VERSION" != "$LATEST_PM2_VERSION" ]]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] Atualizando PM2 de $CURRENT_PM2_VERSION para $LATEST_PM2_VERSION" >>"$LOG_FILE"
-    run_step "$SUDO npm install -g pm2@$LATEST_PM2_VERSION --silent --no-audit --no-fund" \
+    run_step "$SUDO npm install --unsafe-perm -g pm2@$LATEST_PM2_VERSION --silent --no-audit --no-fund" \
       "Atualizando PM2" install
   else
     echo "$(date '+%Y-%m-%d %H:%M:%S') - [INFO] PM2 já está atualizado (v$CURRENT_PM2_VERSION)" >>"$LOG_FILE"
@@ -657,7 +657,7 @@ if command -v pm2 >/dev/null 2>&1; then
       "Sincronizando PM2" install
   fi
 else
-  run_step "$SUDO npm install -g pm2@latest --silent --no-audit --no-fund" \
+  run_step "$SUDO npm install --unsafe-perm -g pm2@latest --silent --no-audit --no-fund" \
     "Instalando PM2" install
   run_step "$SUDO timeout 15s pm2 update >/dev/null 2>&1 || { $SUDO pm2 kill >/dev/null 2>&1; rm -rf ~/.pm2; $SUDO pm2 update >/dev/null 2>&1 || true; }" \
     "Inicializando PM2" install
@@ -886,12 +886,12 @@ Setup_Mwsm
   detect_distro
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    run_step "$SUDO npm install -g npm@latest node-gyp@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
+    run_step "$SUDO npm install --unsafe-perm -g npm@latest node-gyp@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
   else
-    run_step "$SUDO npm install -g npm@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm" update
+    run_step "$SUDO npm install --unsafe-perm -g npm@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm" update
   fi
 
-  run_step "$SUDO npm install --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
+  run_step "$SUDO npm install --unsafe-perm --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
 
       run_step 'fix_wwjs' "Aplicando correções no Wwjs" update
 
@@ -961,12 +961,12 @@ fi
     CURRENT_PM2_VERSION=$(pm2 -v | head -n1 | tr -d '[:space:]')
     LATEST_PM2_VERSION=$(npm view pm2 version 2>/dev/null | tr -d '[:space:]')
     if [[ -n "$LATEST_PM2_VERSION" && "$CURRENT_PM2_VERSION" != "$LATEST_PM2_VERSION" ]]; then
-      run_step "$SUDO npm install -g pm2@$LATEST_PM2_VERSION --silent --no-audit --no-fund" "Atualizando PM2" update
+      run_step "$SUDO npm install --unsafe-perm -g pm2@$LATEST_PM2_VERSION --silent --no-audit --no-fund" "Atualizando PM2" update
     else
       run_step "$SUDO pm2 update >/dev/null 2>&1 || true" "Sincronizando PM2" update
     fi
   else
-    run_step "$SUDO npm install -g pm2@latest --silent --no-audit --no-fund" "Instalando PM2" update
+    run_step "$SUDO npm install --unsafe-perm -g pm2@latest --silent --no-audit --no-fund" "Instalando PM2" update
     run_step "$SUDO timeout 15s pm2 update >/dev/null 2>&1 || { $SUDO pm2 kill >/dev/null 2>&1; rm -rf ~/.pm2; $SUDO pm2 update >/dev/null 2>&1 || true; }" "Inicializando PM2" update
   fi
 
