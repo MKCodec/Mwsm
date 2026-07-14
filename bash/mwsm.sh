@@ -886,9 +886,9 @@ Setup_Mwsm
   detect_distro
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    run_step "$SUDO npm install --unsafe-perm -g npm@latest node-gyp@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
+    run_step "$SUDO npm install --unsafe-perm -g npm@latest node-gyp@latest --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
   else
-    run_step "$SUDO npm install --unsafe-perm -g npm@latest --unsafe-perm --silent --no-audit --no-fund" "Atualizando npm" update
+    run_step "$SUDO npm install --unsafe-perm -g npm@latest --silent --no-audit --no-fund" "Atualizando npm" update
   fi
 
   run_step "$SUDO npm install --unsafe-perm --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
