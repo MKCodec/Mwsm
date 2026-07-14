@@ -601,12 +601,12 @@ $SUDO chown -R "$CURRENT_USER":"$CURRENT_USER" "$BASE_DIR"
       # -------------------------
 cd $BASE_DIR || return
 run_step "node -v >/dev/null 2>&1" "Verificando instalação do Node.js" install
-run_step "$SUDO npm install --unsafe-perm -g npm@latest --quiet --no-progress" "Atualizando NPM" install
+run_step "$SUDO npm install --unsafe-perm -g npm@10 --quiet --no-progress" "Atualizando NPM" install
 run_step "$SUDO npm cache clean --force >/dev/null 2>&1" "Limpando cache NPM" install
 run_step "npm config set registry https://registry.npmjs.org >/dev/null 2>&1" "Configurando registro NPM" install
 
       if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-        run_step "$SUDO npm install --unsafe-perm -g npm@latest node-gyp@latest" "Atualizando npm e node-gyp" install
+        run_step "$SUDO npm install --unsafe-perm -g npm@10 node-gyp@latest" "Atualizando npm e node-gyp" install
         run_step "$SUDO npm install --unsafe-perm --silent --no-fund --no-audit" "Instalando dependências Node" install
         command -v node >/dev/null 2>&1 || $SUDO ln -sf /usr/bin/nodejs /usr/bin/node
         run_step "node -v && npm -v" "Verificando Node.js e NPM" install
@@ -886,9 +886,9 @@ Setup_Mwsm
   detect_distro
 
 if [[ "$DISTRO_DETECT" == "devuan" ]]; then
-    run_step "$SUDO npm install --unsafe-perm -g npm@latest node-gyp@latest --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
+    run_step "$SUDO npm install --unsafe-perm -g npm@10 node-gyp@latest --silent --no-audit --no-fund" "Atualizando npm e node-gyp" update
   else
-    run_step "$SUDO npm install --unsafe-perm -g npm@latest --silent --no-audit --no-fund" "Atualizando npm" update
+    run_step "$SUDO npm install --unsafe-perm -g npm@10 --silent --no-audit --no-fund" "Atualizando npm" update
   fi
 
   run_step "$SUDO npm install --unsafe-perm --silent --no-fund --no-audit" "Atualizando dependências Node.js" update
