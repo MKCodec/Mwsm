@@ -1214,7 +1214,7 @@ async function WwjsVersion(GET) {
 
 
 // ==================================================
-// ðŸ§  InteligÃªncia Artificial
+// 🧠 Inteligência Artificial
 // ==================================================
 
 async function getEmbedding(text) {
@@ -1241,12 +1241,12 @@ async function getEmbedding(text) {
 }
 
 // ==================================================
-// ðŸ•’ Timezone e Cumprimentos DinÃ¢micos
+// 🕒 Timezone e Cumprimentos Dinâmicos
 // ==================================================
 async function getTimezoneByUF(uf) {
 	return new Promise((resolve) => {
 		db.get("SELECT timezone FROM localzone WHERE uf = ?", [uf], (err, row) => {
-			if (err || !row) return resolve("America/Sao_Paulo"); // padrÃ£o SP
+			if (err || !row) return resolve("America/Sao_Paulo"); // padrão SP
 			resolve(row.timezone);
 		});
 	});
@@ -1268,21 +1268,21 @@ function getGreetingPeriod(timezone) {
 		if (hour >= 18 && hour < 24) return "boa noite";
 		if (hour >= 0 && hour < 5) return "boa madrugada";
 	} catch (err) {
-		console.error("[ERRO] Falha ao determinar saudaÃ§Ã£o:", err);
+		console.error("[ERRO] Falha ao determinar saudação:", err);
 		return "";
 	}
 }
 
 
 // ==================================================
-// ðŸ”’ Filtro TemÃ¡tico (Palavras-chave no BD)
+// 🔒 Filtro Temático (Palavras-chave no BD)
 // ==================================================
 async function isRelevantQuestion(text) {
 	return new Promise((resolve) => {
 		db.all("SELECT filter FROM keywords", [], (err, rows) => {
 			if (err) {
 				console.error("Keyword filter error:", err.message);
-				return resolve(true); // nÃ£o bloqueia em erro
+				return resolve(true); // não bloqueia em erro
 			}
 			if (!rows || rows.length === 0) return resolve(true);
 
@@ -1297,7 +1297,7 @@ async function isRelevantQuestion(text) {
 
 
 // ==================================================
-// ðŸŽ¯ LÃ³gica Principal da IA
+// 🎯 Lógica Principal da IA
 // ==================================================
 async function askAI(question) {
 	return new Promise(async (resolve) => {
@@ -1317,16 +1317,16 @@ async function askAI(question) {
 				const turno = getGreetingPeriod(tz);
 
 				if (turno) {
-					return resolve(`ðŸ‘‹ OlÃ¡, ${turno}! Como posso te ajudar com sua conexÃ£o de internet?`);
+					return resolve(`👋 Olá, ${turno}! Como posso te ajudar com sua conexão de internet?`);
 				} else {
-					return resolve(`ðŸ‘‹ OlÃ¡! Como posso te ajudar com sua conexÃ£o de internet?`);
+					return resolve(`👋 Olá! Como posso te ajudar com sua conexão de internet?`);
 				}
 			}
 
 			const isRelevant = await isRelevantQuestion(text);
 			if (!isRelevant) {
-				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter â†’ Ignored.`);
-				return resolve("âš ï¸ Posso ajudar apenas com dÃºvidas sobre sua conexÃ£o de internet e suporte tÃ©cnico.");
+				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter → Ignored.`);
+				return resolve("⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.");
 			}
 
 			const aiMode = parseInt(Debug('OPTIONS').aimode);
@@ -1359,7 +1359,7 @@ async function askAI(question) {
 				Module = Regedit?.module || null;
 				Level = parseInt(Regedit?.level);
 			}
-			if (!Module) return resolve("âš ï¸ IndisponÃ­vel no momento.");
+			if (!Module) return resolve("⚠️ Indisponível no momento.");
 
 			const qEmbedding = await getEmbedding(question);
 			let bestMatch = null;
@@ -1393,7 +1393,7 @@ async function askAI(question) {
 			console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
 			const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
 
-			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("âš ")) {
+			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("⚠️")) {
 				try {
 					await enforceKnowledgeLimit();
 					const _embedding = await getEmbedding(question);
@@ -1422,13 +1422,13 @@ async function askAI(question) {
 			return resolve(aiAnswer);
 		} catch (err) {
 			console.error("IA error:", err.message || err);
-			return resolve("âš ï¸ NÃ£o consegui acessar a inteligÃªncia artificial no momento.");
+			return resolve("⚠️ Não consegui acessar a inteligência artificial no momento.");
 		}
 	});
 }
 
 // ==================================================
-// ðŸŒ ComunicaÃ§Ã£o com API (OpenRouter) + Limite de Tentativas
+// 🌐 Comunicação com API (OpenRouter) + Limite de Tentativas
 // ==================================================
 async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level = 0) {
 	const tried = [];
@@ -1451,7 +1451,7 @@ async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, 
 			});
 		}
 
-		if (!variants.length) throw new Error("âš ï¸ Erro ao buscar resposta da IA online.");
+		if (!variants.length) throw new Error("⚠️ Erro ao buscar resposta da IA online.");
 
 		const activeVariant = variants.find(v => v.active === 1);
 		const orderedVariants = activeVariant ?
@@ -1493,28 +1493,28 @@ async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, 
 
 				const aiAnswer =
 					response.data?.choices?.[0]?.message?.content?.trim() ||
-					"Desculpe, nÃ£o consegui entender sua solicitaÃ§Ã£o.";
+					"Desculpe, não consegui entender sua solicitação.";
 
 				db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
 				db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
 
-				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} â†’ ATIVA`);
+				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → ATIVA`);
 				return aiAnswer.replace(/\s+/g, " ").trim();
 			} catch (err) {
-				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} â†’ INATIVA`);
+				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → INATIVA`);
 				db.run("UPDATE engine SET active = 0 WHERE id = ?", [variant.id]);
 				continue;
 			}
 		}
 
-		return "âš ï¸ Erro ao buscar resposta da IA online.";
+		return "⚠️ Erro ao buscar resposta da IA online.";
 	} catch {
-		return "âš ï¸ Erro ao buscar resposta da IA online.";
+		return "⚠️ Erro ao buscar resposta da IA online.";
 	}
 }
 
 // ==================================================
-// ðŸ“Š Similaridade Vetorial
+// 📊 Similaridade Vetorial
 // ==================================================
 function cosineSimilarity(vecA, vecB) {
 	if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
@@ -1530,7 +1530,7 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // ==================================================
-// ðŸ§¹ Limpeza DinÃ¢mica e Inteligente do Conhecimento
+// 🧹 Limpeza Dinâmica e Inteligente do Conhecimento
 // ==================================================
 async function enforceKnowledgeLimit() {
 	try {
@@ -1553,7 +1553,7 @@ async function enforceKnowledgeLimit() {
 				[excess],
 				function(delErr) {
 					if (delErr) console.error("Cleanup error:", delErr.message);
-					else console.log(`âœ… ${this.changes} registros antigos removidos.`);
+					else console.log(`✅ ${this.changes} registros antigos removidos.`);
 				}
 			);
 		});
@@ -1563,7 +1563,7 @@ async function enforceKnowledgeLimit() {
 }
 
 // ==================================================
-// ðŸ”¹ Embedding Local (Backup Seguro)
+// 🔹 Embedding Local (Backup Seguro)
 // ==================================================
 async function getLocalEmbedding(text) {
 	return Array.from(text).map((c, i) => ((c.charCodeAt(0) + i * 7) % 255) / 255);
@@ -4717,11 +4717,10 @@ let lastGlobalRequest = 0;
 let globalQueue = Promise.resolve();
 
 // ==================================================
-// ðŸ¤– WhatsApp Bot â€” Menu + IA 
+// 🤖 WhatsApp Bot — Menu + IA 
 // ==================================================
 client.on('message', async msg => {
 	const nomeContato = msg._data.notifyName;
-	let groupChat = await msg.getChat();
 
 	if (msg.type.toLowerCase() == "e2e_notification") return null;
 	if (msg.body == "") return null;
@@ -4740,18 +4739,18 @@ client.on('message', async msg => {
 	const isWhatsApp = isWid; 
 	if (msg.body.trim().toLowerCase() === "menu") {
 		if (activeMenus.has(msg.from)) {
-			await client.sendMessage(msg.from, "âš ï¸ VocÃª jÃ¡ estÃ¡ dentro do menu.\nEnvie *0* para sair primeiro.");
+			await client.sendMessage(msg.from, "⚠️ Você já está dentro do menu.\nEnvie *0* para sair primeiro.");
 			return;
 		}
 
 		activeMenus.set(msg.from, true);
 		await client.sendMessage(
 			msg.from,
-			'ðŸ“‹ *Menu Principal*\n\n' +
-			'1ï¸âƒ£ Boleto\n' +
-			'2ï¸âƒ£ Suporte\n' +
-			'0ï¸âƒ£ Encerrar\n\n' +
-			'ðŸ‘‰ Responda com o nÃºmero da opÃ§Ã£o:'
+			'📋 *Menu Principal*\n\n' +
+			'1️⃣ Boleto\n' +
+			'2️⃣ Suporte\n' +
+			'0️⃣ Encerrar\n\n' +
+			'👉 Responda com o número da opção:'
 		);
 		return;
 	}
@@ -4763,7 +4762,7 @@ client.on('message', async msg => {
 				if (["0", "sair", "tchau", "tchal"].includes(_iaExit)) {
 					activeSupportIA.delete(msg.from);
 					activeMenus.delete(msg.from);
-					await client.sendMessage(msg.from, "âœ… Atendimento encerrado.\nObrigado pelo contato!");
+					await client.sendMessage(msg.from, "✅ Atendimento encerrado.\nObrigado pelo contato!");
 					return;
 				}
 				if (_iaExit === "menu") {
@@ -4771,11 +4770,11 @@ client.on('message', async msg => {
 					activeMenus.set(msg.from, true);
 					await client.sendMessage(
 						msg.from,
-						'ðŸ“‹ *Menu Principal*\n\n' +
-						'1ï¸âƒ£ Boleto\n' +
-						'2ï¸âƒ£ Suporte\n' +
-						'0ï¸âƒ£ Encerrar\n\n' +
-						'ðŸ‘‰ Responda com o nÃºmero da opÃ§Ã£o:'
+						'📋 *Menu Principal*\n\n' +
+						'1️⃣ Boleto\n' +
+						'2️⃣ Suporte\n' +
+						'0️⃣ Encerrar\n\n' +
+						'👉 Responda com o número da opção:'
 					);
 					return;
 				}
@@ -4860,18 +4859,18 @@ client.on('message', async msg => {
 		}
 
 		if (msg.body.startsWith('1')) {
-			await client.sendMessage(msg.from, 'ðŸ”— Aqui estÃ¡ o link do seu boleto: https://seudominio.com/boleto');
+			await client.sendMessage(msg.from, '🔗 Aqui está o link do seu boleto: https://seudominio.com/boleto');
 			return;
 		}
 
 		if (msg.body.startsWith('2')) {
-			await client.sendMessage(msg.from, 'ðŸ¤– VocÃª estÃ¡ agora em atendimento de suporte com IA. Envie sua dÃºvida.');
+			await client.sendMessage(msg.from, '🤖 Você está agora em atendimento de suporte com IA. Envie sua dúvida.');
 			activeSupportIA.set(msg.from, true);
 			return;
 		}
 
 		if (msg.body.startsWith('0')) {
-			await client.sendMessage(msg.from, 'âœ… Atendimento encerrado.\nObrigado pelo contato!');
+			await client.sendMessage(msg.from, '✅ Atendimento encerrado.\nObrigado pelo contato!');
 			activeMenus.delete(msg.from);
 			return;
 		}
