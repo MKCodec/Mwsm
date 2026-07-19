@@ -2474,6 +2474,7 @@ app.post('/tag', (req, res) => {
 });
 
 
+
 // Backup
 app.post('/backup', (req, res) => {
 	const Backup = req.body.backup;
@@ -2488,6 +2489,50 @@ app.post('/backup', (req, res) => {
 			res.json({
 				Status: "Success",
 				Return: Backup
+			});
+		});
+	}
+});
+
+
+
+
+// Owner
+app.post('/owner', (req, res) => {
+	const ShortName = req.body.owner;
+	if (Debug('MKAUTH').owner != ShortName) {
+		db.run("UPDATE mkauth SET owner=?", [ShortName], (err) => {
+			if (err) {
+				res.json({
+					Status: "Fail",
+					Return: Debug('MKAUTH').owner
+				});
+			}
+			res.json({
+				Status: "Success",
+				Return: ShortName
+			});
+		});
+	}
+});
+
+
+
+
+// OnReboot
+app.post('/onreboot', (req, res) => {
+	const OnReboot = req.body.onreboot;
+	if (Debug('OPTIONS').onreboot != OnReboot) {
+		db.run("UPDATE options SET onreboot=?", [OnReboot], (err) => {
+			if (err) {
+				res.json({
+					Status: "Fail",
+					Return: Debug('OPTIONS').onreboot
+				});
+			}
+			res.json({
+				Status: "Success",
+				Return: OnReboot
 			});
 		});
 	}
@@ -2748,12 +2793,14 @@ app.post('/token', async (req, res) => {
 		global.io.emit('debugger', Debug('OPTIONS').debugger);
 		global.io.emit('Tag', Debug('OPTIONS').tag);
 		global.io.emit('regex', Debug('OPTIONS').regex);
+                global.io.emit('onreboot', Debug('OPTIONS').onreboot);
 		global.io.emit('uptodate', Debug('RELEASE').isupdate);
 		global.io.emit('protected', Debug('OPTIONS').protect);
 		global.io.emit('spam', Debug('MKAUTH').level);
 		global.io.emit('backup', Debug('MKAUTH').backup);
 		global.io.emit('aimbot', Debug('MKAUTH').aimbot);
 		global.io.emit('doublekill', Debug('MKAUTH').prevent);
+		global.io.emit('owner', Debug('MKAUTH').owner);
 		global.io.emit('ismonth', (DateTime().split('-')[1]));
 		global.io.emit('isyear', (DateTime().split('-')[0]));
 		global.io.emit('issearch', 'all');

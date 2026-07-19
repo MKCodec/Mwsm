@@ -3305,6 +3305,29 @@ $(document).ready(function() {
 	});
 
 
+	socket.on('onreboot', function(data) {
+		switch (data) {
+			case 'true':
+				$("#OnReboot").prop("checked", true);
+				break;
+			case 'false':
+				$("#OnReboot").prop("checked", false);
+				break;
+		}
+	});
+
+	socket.on('owner', function(data) {
+		switch (data) {
+			case 'true':
+				$("#Owner").prop("checked", true);
+				break;
+			case 'false':
+				$("#Owner").prop("checked", false);
+				break;
+		}
+	});
+
+
 	socket.on('doublekill', function(data) {
 		switch (data) {
 			case 'true':
@@ -3315,6 +3338,7 @@ $(document).ready(function() {
 				break;
 		}
 	});
+
 
 	socket.on('regex', function(data) {
 		switch (data) {
@@ -4340,6 +4364,44 @@ $(document).ready(function() {
 			url: "/prevent",
 			data: {
 				prevent: $("#DoubleKill").prop('checked')
+			},
+			beforeSend: function(data) {
+				$(".Reset").removeClass("change").addClass("fa-spin").prop('disabled', true);
+			},
+			success: function(data) {
+				$(".Reset").removeClass("fa-spin").addClass("change").prop('disabled', false);
+			},
+			error: function(request, status, error) {
+				$(".Reset").removeClass("fa-spin").addClass("change").prop('disabled', false);
+			}
+		});
+	});
+
+	$("#OnReboot").on('change', function() {
+		$.ajax({
+			type: "POST",
+			url: "/onreboot",
+			data: {
+				onreboot: $("#OnReboot").prop('checked')
+			},
+			beforeSend: function(data) {
+				$(".Reset").removeClass("change").addClass("fa-spin").prop('disabled', true);
+			},
+			success: function(data) {
+				$(".Reset").removeClass("fa-spin").addClass("change").prop('disabled', false);
+			},
+			error: function(request, status, error) {
+				$(".Reset").removeClass("fa-spin").addClass("change").prop('disabled', false);
+			}
+		});
+	});
+
+	$("#Owner").on('change', function() {
+		$.ajax({
+			type: "POST",
+			url: "/owner",
+			data: {
+				owner: $("#Owner").prop('checked')
 			},
 			beforeSend: function(data) {
 				$(".Reset").removeClass("change").addClass("fa-spin").prop('disabled', true);
