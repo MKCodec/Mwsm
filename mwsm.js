@@ -1010,6 +1010,15 @@ cron.schedule('0 0 * * *', async () => {
 	timezone: "America/Sao_Paulo"
 });
 
+cron.schedule('30 0 * * *', async () => {
+	if (!Boolean(Debug('OPTIONS').onreboot)) {
+		await exec('npm run restart:mwsm');
+	}
+}, {
+	scheduled: true,
+	timezone: "America/Sao_Paulo"
+});
+
 cron.schedule('*/' + Debug('SCHEDULER').cron + ' 3-23 * * *', async () => {
 	if (!Boolean(Debug('RELEASE').reload)) {
 		await GetSchedule();
