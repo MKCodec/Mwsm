@@ -1011,7 +1011,7 @@ cron.schedule('0 0 * * *', async () => {
 });
 
 cron.schedule('30 0 * * *', async () => {
-	if (!Boolean(Debug('OPTIONS').onreboot)) {
+	if (Boolean(Debug('OPTIONS').onreboot)) {
 		await exec('npm run restart:mwsm');
 	}
 }, {
