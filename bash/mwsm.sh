@@ -438,7 +438,7 @@ run_step '(
 
   fi
 
-# -------------------------
+  # -------------------------
   # Instalando SQLite3 e Redis
   # -------------------------
   run_step "command -v sqlite3 >/dev/null 2>&1 || $SUDO apt-get install -y sqlite3 --no-install-recommends" "Instalando SQLite3" install
