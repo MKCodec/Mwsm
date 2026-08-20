@@ -438,10 +438,12 @@ run_step '(
 
   fi
 
-  # -------------------------
-  # Instalando SQLite3 (comum)
+# -------------------------
+  # Instalando SQLite3 e Redis
   # -------------------------
   run_step "command -v sqlite3 >/dev/null 2>&1 || $SUDO apt-get install -y sqlite3 --no-install-recommends" "Instalando SQLite3" install
+  run_step "command -v redis-server >/dev/null 2>&1 || $SUDO apt-get install -y redis-server --no-install-recommends" "Instalando Redis" install
+  run_step "$SUDO systemctl enable redis-server && $SUDO systemctl start redis-server" "Iniciando serviço Redis" install
 
   # -------------------------
   # Node.js - Configurar repositório
