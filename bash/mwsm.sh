@@ -34,31 +34,15 @@ fix_wwjs() {
   local STORE_FILE="${BASE_PATH}/Store.js"
   local UTILS_FILE="${BASE_PATH}/Utils.js"
 
+  # Fix em Store.js
   if [ -f "$STORE_FILE" ] && grep -q '() => false' "$STORE_FILE"; then
     sed -i 's/() => false/() => true/' "$STORE_FILE"
   fi
 
-  # if [ -f "$UTILS_FILE" ] && grep -q 'window.Store.SocketWap.USER_JID' "$UTILS_FILE"; then
-  #   sed -i '/window\.WWebJS\.rejectCall\s*=\s*async/,/};/c\
-  #   window.WWebJS.rejectCall = async (peerJid, id) => {\
-  #       let userId = window.Store.User.getMaybeMePnUser()._serialized;\
-  #       const stanza = window.Store.SocketWap.wap("call", {\
-  #           id: window.Store.SocketWap.generateId(),\
-  #           from: userId,\
-  #           to: peerJid,\
-  #       }, [\
-  #           window.Store.SocketWap.wap("reject", {\
-  #               "call-id": id,\
-  #               "call-creator": peerJid,\
-  #               count: "0",\
-  #           })\
-  #       ]);\
-  #       await window.Store.Socket.deprecatedCastStanza(stanza);\
-  #   };' "$UTILS_FILE"
-  # fi
-
-  # Fix sendSeen
-  [ -f "$UTILS_FILE" ] && cp "$UTILS_FILE" "$UTILS_FILE.backup" && sed -i 's|await window\.Store\.SendSeen\.sendSeen(chat);|await window.Store.SendSeen.markSeen(chat);|g' "$UTILS_FILE"
+  # Fix sendSeen em Utils.js (sem criar backup para não poluir o patch-package)
+  if [ -f "$UTILS_FILE" ]; then
+    sed -i 's|await window\.Store\.SendSeen\.sendSeen(chat);|await window.Store.SendSeen.markSeen(chat);|g' "$UTILS_FILE"
+  fi
 }
 
 
@@ -579,7 +563,7 @@ cp "$0" "$TMP_SCRIPT" >/dev/null 2>&1 || true
 run_step "rm -rf $BASE_DIR && mkdir -p $BASE_DIR && cd $BASE_DIR && \
 git init && git remote add origin https://github.com/MKCodec/Mwsm.git && \
 git config core.sparseCheckout true && \
-echo -e 'fonts/\nicon.png\nindex.html\njquery.js\nmwsm.db\nmwsm.js\nmwsm.json\nnodemon.json\npackage.json\nscript.js\nsocket.io.js\nstyle.css\nversion.json\nmwsm.py' > .git/info/sparse-checkout && \
+echo -e 'patches/\nfonts/\nicon.png\nindex.html\njquery.js\nmwsm.db\nmwsm.js\nmwsm.json\nnodemon.json\npackage.json\nscript.js\nsocket.io.js\nstyle.css\nversion.json\nmwsm.py' > .git/info/sparse-checkout && \
 git pull origin main || git pull origin master" "Baixando repositório Mwsm" install
 
 # 🧩 Se já existir instalação anterior, ativa modo silencioso
