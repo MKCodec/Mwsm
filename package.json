@@ -4,14 +4,15 @@
   "description": "Bot-Mwsm: based on Whatsapp API",
   "main": "mwsm.js",
   "scripts": {
-    "update:wa": "npm install github:pedroslopez/whatsapp-web.js#main --silent --no-audit --no-fund",
+    "postinstall": "patch-package",
+    "update:wa": "npm install github:pedroslopez/whatsapp-web.js#main --silent --no-audit --no-fund && npx patch-package",
     "prestart": "npm run update:wa",
     "start": "node mwsm.js",
     "start:dev": "nodemon mwsm.js",
-    "setup:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush",
-    "setup:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush",
-    "start:mwsm": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush && pm2 logs",
-    "start:mkauth": "npm run update:wa && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush && pm2 logs",
+    "setup:mwsm": "npm run update:wa && pm2 update && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush",
+    "setup:mkauth": "npm run update:wa && pm2 update && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush",
+    "start:mwsm": "npm run update:wa && pm2 update && pm2 start mwsm.json && pm2 save && pm2 startup && pm2 flush && pm2 logs",
+    "start:mkauth": "npm run update:wa && pm2 update && pm2 start mwsm.json && pm2 save && pm2 unstartup && pm2 flush && pm2 logs",
     "restart:mwsm": "npm run update:wa && pm2 restart mwsm.json && pm2 flush && pm2 logs",
     "reboot:mwsm": "pm2 restart bot-mwsm && pm2 flush && pm2 logs"
   },
@@ -33,13 +34,17 @@
     "npm": ">=9.0.0"
   },
   "dependencies": {
+    "@bull-board/api": "^6.7.0",
+    "@bull-board/express": "^6.7.0",
     "axios": "^1.6.8",
     "better-sqlite3": "^9.4.3",
+    "bullmq": "^6.1.2",
     "Emoji-API": "git+https://github.com/MKCodec/Emoji-API",
     "express": "^4.19.2",
     "express-fileupload": "^1.5.0",
     "express-validator": "^7.0.1",
     "http": "0.0.1-security",
+    "ioredis": "^6.0.0",
     "ip": "^2.0.1",
     "mime-types": "^2.1.35",
     "node-cron": "^3.0.3",
@@ -52,6 +57,7 @@
     "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "patch-package": "^8.0.1"
   }
 }
