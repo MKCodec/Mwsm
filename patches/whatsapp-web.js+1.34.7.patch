@@ -1,1815 +1,846 @@
+diff --git a/node_modules/whatsapp-web.js/src/Client.js b/node_modules/whatsapp-web.js/src/Client.js
+index 62de539..e3f2f55 100644
+--- a/node_modules/whatsapp-web.js/src/Client.js
++++ b/node_modules/whatsapp-web.js/src/Client.js
+@@ -499,6 +499,19 @@ class Client extends EventEmitter {
+             // navigator.webdriver fix
+             browserArgs.push('--disable-blink-features=AutomationControlled');
+ 
++            // Required for the calling feature: allow the audio graph to run
++            // without a user gesture and auto-grant the microphone permission.
++            const callArgs = [
++                '--autoplay-policy=no-user-gesture-required',
++                '--use-fake-ui-for-media-stream',
++            ];
++            for (const arg of callArgs) {
++                const flag = arg.split('=')[0];
++                if (!browserArgs.find((a) => a.startsWith(flag))) {
++                    browserArgs.push(arg);
++                }
++            }
++
+             browser = await puppeteer.launch({
+                 ...puppeteerOpts,
+                 args: browserArgs,
+@@ -1131,26 +1144,63 @@ class Client extends EventEmitter {
+                 WAWebCallCollection &&
+                 typeof WAWebCallCollection.on === 'function'
+             ) {
+-                const mapKey = Object.keys(WAWebCallCollection).find(
+-                    (k) => WAWebCallCollection[k] instanceof Map,
+-                );
+-                const internalCallMap = WAWebCallCollection[mapKey];
+-                const originalMapSet =
+-                    internalCallMap.set.bind(internalCallMap);
+-
+-                internalCallMap.set = function (key, value) {
++                const emitCall = (call) => {
++                    if (
++                        !call ||
++                        !call.id ||
++                        window._wwjsLastCallId === call.id
++                    ) {
++                        return;
++                    }
++                    window._wwjsLastCallId = call.id;
+                     window.onIncomingCall({
+-                        id: value.id,
+-                        peerJid: value.peerJid,
+-                        isVideo: value.isVideo,
+-                        isGroup: value.isGroup,
+-                        canHandleLocally: value.canHandleLocally,
+-                        outgoing: value.outgoing,
+-                        webClientShouldHandle: value.webClientShouldHandle,
+-                        participants: value.participants,
++                        id: call.id,
++                        peerJid: call.peerJid,
++                        isVideo: call.isVideo,
++                        isGroup: call.isGroup,
++                        canHandleLocally: call.canHandleLocally,
++                        outgoing: call.outgoing,
++                        webClientShouldHandle: call.webClientShouldHandle,
++                        participants: call.participants,
+                     });
+-                    return originalMapSet(key, value);
+                 };
++
++                // Newer WhatsApp Web surfaces calls through the collection's
++                // activeCall attribute instead of inserting them into the map.
++                // The changed call is passed as the handler argument; the
++                // lastActiveCall getter is not yet updated at this point.
++                if (!window._wwjsCallListener) {
++                    window._wwjsCallListener = true;
++                    WAWebCallCollection.on('change:activeCall', (call) => {
++                        if (call) {
++                            emitCall(call);
++                        }
++                        // Restore the real microphone once the call is over so a
++                        // following normal call is not fed the injected stream.
++                        if (
++                            !call ||
++                            (typeof call.getState === 'function' &&
++                                call.getState() === 0)
++                        ) {
++                            window.WWebJS.teardownCallMediaStream?.();
++                        }
++                    });
++                }
++
++                // Fallback for versions that still populate the internal map.
++                const mapKey = Object.keys(WAWebCallCollection).find(
++                    (k) => WAWebCallCollection[k] instanceof Map,
++                );
++                if (mapKey) {
++                    const internalCallMap = WAWebCallCollection[mapKey];
++                    const originalMapSet =
++                        internalCallMap.set.bind(internalCallMap);
++
++                    internalCallMap.set = function (key, value) {
++                        emitCall(value);
++                        return originalMapSet(key, value);
++                    };
++                }
+             }
+             Chat.on('remove', async (chat) => {
+                 window.onRemoveChatEvent(
+@@ -3285,6 +3335,49 @@ class Client extends EventEmitter {
+         );
+     }
+ 
++    /**
++     * Places an outgoing call to the provided chat or phone number
++     * @param {string} chatId The chat ID ("@c.us" is automatically appended) or phone number to call
++     * @param {object} [options] Call options
++     * @param {boolean} [options.video=false] Whether to place a video call instead of a voice call
++     * @param {boolean} [options.waitForAnswer=false] If true, waits until the callee answers (or the timeout elapses) before resolving
++     * @param {number} [options.answerTimeout=60000] Maximum time to wait for an answer, in milliseconds, when waitForAnswer is true
++     * @param {boolean} [options.injectAudio=true] Route the outgoing audio from injected clips (via Call.playAudio) instead of the real microphone. Set false to place a normal call
++     * @returns {Promise<Call>} The placed call
++     */
++    async call(chatId, options = {}) {
++        const callData = await this.pupPage.evaluate(
++            (id, isVideo, waitForAnswer, answerTimeout, injectAudio) => {
++                return window.WWebJS.startCall(
++                    id,
++                    isVideo,
++                    waitForAnswer,
++                    answerTimeout,
++                    injectAudio,
++                );
++            },
++            chatId,
++            options.video ?? false,
++            options.waitForAnswer ?? false,
++            options.answerTimeout ?? 60000,
++            options.injectAudio ?? true,
++        );
++
++        return new Call(this, callData);
++    }
++
++    /**
++     * Gets the call that is currently ongoing (ringing, being placed or connected), if any
++     * @returns {Promise<Call|null>} The current call, or null if there is no ongoing call
++     */
++    async getActiveCall() {
++        const callData = await this.pupPage.evaluate(() => {
++            return window.WWebJS.getActiveCall();
++        });
++
++        return callData ? new Call(this, callData) : null;
++    }
++
+     /**
+      * Sends a response to the scheduled event message, indicating whether a user is going to attend the event or not
+      * @param {number} response The response code to the scheduled event message. Valid values are: `0` for NONE response (removes a previous response) | `1` for GOING | `2` for NOT GOING | `3` for MAYBE going
+diff --git a/node_modules/whatsapp-web.js/src/structures/Chat.js b/node_modules/whatsapp-web.js/src/structures/Chat.js
+index 79624e3..9860ed4 100644
+--- a/node_modules/whatsapp-web.js/src/structures/Chat.js
++++ b/node_modules/whatsapp-web.js/src/structures/Chat.js
+@@ -1,13 +1,12 @@
+ 'use strict';
+ 
+ const Base = require('./Base');
+-const Message = require('./Message');
+ 
+ /**
+- * Represents a Chat on WhatsApp
++ * Represents a Call on WhatsApp
+  * @extends {Base}
+  */
+-class Chat extends Base {
++class Call extends Base {
+     constructor(client, data) {
+         super(client);
+ 
+@@ -16,336 +15,116 @@ class Chat extends Base {
+ 
+     _patch(data) {
+         /**
+-         * ID that represents the chat
+-         * @type {object}
+-         */
+-        this.id = Base._normalizeId(data.id);
+-
+-        /**
+-         * Title of the chat
++         * Call ID
+          * @type {string}
+          */
+-        this.name = data.formattedTitle;
+-
+-        /**
+-         * Indicates if the Chat is a Group Chat
+-         * @type {boolean}
+-         */
+-        this.isGroup = data.isGroup;
+-
+-        /**
+-         * Indicates if the Chat is readonly
+-         * @type {boolean}
+-         */
+-        this.isReadOnly = data.isReadOnly;
+-
++        this.id = data.id;
+         /**
+-         * Amount of messages unread
+-         * @type {number}
++         * From
++         * @type {string}
+          */
+-        this.unreadCount = data.unreadCount;
+-
++        this.from = data.peerJid;
+         /**
+-         * Unix timestamp for when the last activity occurred
++         * Unix timestamp for when the call was created
+          * @type {number}
+          */
+-        this.timestamp = data.t;
+-
++        this.timestamp = data.offerTime;
+         /**
+-         * Indicates if the Chat is archived
++         * Is video
+          * @type {boolean}
+          */
+-        this.archived = data.archive;
+-
++        this.isVideo = data.isVideo;
+         /**
+-         * Indicates if the Chat is pinned
++         * Is Group
+          * @type {boolean}
+          */
+-        this.pinned = !!data.pin;
+-
++        this.isGroup = data.isGroup;
+         /**
+-         * Indicates if the Chat is locked
++         * Indicates if the call was sent by the current user
+          * @type {boolean}
+          */
+-        this.isLocked = data.isLocked;
+-
++        this.fromMe = data.outgoing;
+         /**
+-         * Indicates if the chat is muted or not
++         * Indicates if the call can be handled in waweb
+          * @type {boolean}
+          */
+-        this.isMuted = data.isMuted;
+-
++        this.canHandleLocally = data.canHandleLocally;
+         /**
+-         * Unix timestamp for when the mute expires
+-         * @type {number}
++         * Indicates if the call Should be handled in waweb
++         * @type {boolean}
+          */
+-        this.muteExpiration = data.muteExpiration;
+-
++        this.webClientShouldHandle = data.webClientShouldHandle;
+         /**
+-         * Last message fo chat
+-         * @type {Message}
++         * Object with participants
++         * @type {object}
+          */
+-        this.lastMessage = data.lastMessage
+-            ? new Message(this.client, data.lastMessage)
+-            : undefined;
++        this.participants = data.participants;
+ 
+         return super._patch(data);
+     }
+ 
+     /**
+-     * Send a message to this chat
+-     * @param {string|MessageMedia|Location} content
+-     * @param {MessageSendOptions} [options]
+-     * @returns {Promise<Message>} Message that was just sent
+-     */
+-    async sendMessage(content, options) {
+-        return this.client.sendMessage(this.id._serialized, content, options);
+-    }
+-
+-    /**
+-     * Sets the chat as seen
+-     * @returns {Promise<Boolean>} result
+-     */
+-    async sendSeen() {
+-        return this.client.sendSeen(this.id._serialized);
+-    }
+-
+-    /**
+-     * Clears all messages from the chat
+-     * @returns {Promise<boolean>} result
+-     */
+-    async clearMessages() {
+-        return this.client.pupPage.evaluate((chatId) => {
+-            return window.WWebJS.sendClearChat(chatId);
+-        }, this.id._serialized);
+-    }
+-
+-    /**
+-     * Deletes the chat
+-     * @returns {Promise<Boolean>} result
++     * Reject the call
+      */
+-    async delete() {
+-        return this.client.pupPage.evaluate((chatId) => {
+-            return window.WWebJS.sendDeleteChat(chatId);
+-        }, this.id._serialized);
+-    }
+-
+-    /**
+-     * Archives this chat
+-     */
+-    async archive() {
+-        return this.client.archiveChat(this.id._serialized);
+-    }
+-
+-    /**
+-     * un-archives this chat
+-     */
+-    async unarchive() {
+-        return this.client.unarchiveChat(this.id._serialized);
+-    }
+-
+-    /**
+-     * Pins this chat
+-     * @returns {Promise<boolean>} New pin state. Could be false if the max number of pinned chats was reached.
+-     */
+-    async pin() {
+-        return this.client.pinChat(this.id._serialized);
+-    }
+-
+-    /**
+-     * Unpins this chat
+-     * @returns {Promise<boolean>} New pin state
+-     */
+-    async unpin() {
+-        return this.client.unpinChat(this.id._serialized);
+-    }
+-
+-    /**
+-     * Mutes this chat forever, unless a date is specified
+-     * @param {?Date} unmuteDate Date when the chat will be unmuted, don't provide a value to mute forever
+-     * @returns {Promise<{isMuted: boolean, muteExpiration: number}>}
+-     */
+-    async mute(unmuteDate) {
+-        const result = await this.client.muteChat(
+-            this.id._serialized,
+-            unmuteDate,
++    async reject() {
++        return this.client.pupPage.evaluate(
++            (peerJid, id) => {
++                return window.WWebJS.rejectCall(peerJid, id);
++            },
++            this.from,
++            this.id,
+         );
+-        this.isMuted = result.isMuted;
+-        this.muteExpiration = result.muteExpiration;
+-        return result;
+-    }
+-
+-    /**
+-     * Unmutes this chat
+-     * @returns {Promise<{isMuted: boolean, muteExpiration: number}>}
+-     */
+-    async unmute() {
+-        const result = await this.client.unmuteChat(this.id._serialized);
+-        this.isMuted = result.isMuted;
+-        this.muteExpiration = result.muteExpiration;
+-        return result;
+-    }
+-
+-    /**
+-     * Mark this chat as unread
+-     */
+-    async markUnread() {
+-        return this.client.markChatUnread(this.id._serialized);
+     }
+ 
+     /**
+-     * Loads chat messages, sorted from earliest to latest.
+-     * @param {Object} searchOptions Options for searching messages. Right now only limit and fromMe is supported.
+-     * @param {Number} [searchOptions.limit] The amount of messages to return. If no limit is specified, the available messages will be returned. Note that the actual number of returned messages may be smaller if there aren't enough messages in the conversation. Set this to Infinity to load all messages.
+-     * @param {Boolean} [searchOptions.fromMe] Return only messages from the bot number or vise versa. To get all messages, leave the option undefined.
+-     * @returns {Promise<Array<Message>>}
++     * Accept the call
++     * @param {object} [options] Accept options
++     * @param {boolean} [options.video=false] Whether to answer with video (requires a camera). Defaults to audio only, even for incoming video calls
++     * @param {boolean} [options.injectAudio=true] Route the outgoing audio from injected clips (playAudio) instead of the real microphone
++     * @returns {Promise<boolean>}
+      */
+-    async fetchMessages(searchOptions) {
+-        let messages = await this.client.pupPage.evaluate(
+-            async (chatId, searchOptions) => {
+-                const msgFilter = (m) => {
+-                    if (m.isNotification) {
+-                        return false; // dont include notification messages
+-                    }
+-                    if (
+-                        searchOptions &&
+-                        searchOptions.fromMe !== undefined &&
+-                        m.id.fromMe !== searchOptions.fromMe
+-                    ) {
+-                        return false;
+-                    }
+-                    return true;
+-                };
+-
+-                const chat = await window.WWebJS.getChat(chatId, {
+-                    getAsModel: false,
+-                });
+-                let msgs = chat.msgs.getModelsArray().filter(msgFilter);
+-
+-                if (searchOptions && searchOptions.limit > 0) {
+-                    while (msgs.length < searchOptions.limit) {
+-                        const loadedMessages = await window
+-                            .require('WAWebChatLoadMessages')
+-                            .loadEarlierMsgs({ chat });
+-                        if (!loadedMessages || !loadedMessages.length) break;
+-                        msgs = [...loadedMessages.filter(msgFilter), ...msgs];
+-                    }
+-
+-                    if (msgs.length > searchOptions.limit) {
+-                        msgs.sort((a, b) => (a.t > b.t ? 1 : -1));
+-                        msgs = msgs.splice(msgs.length - searchOptions.limit);
+-                    }
+-                }
+-
+-                return msgs.map((m) => window.WWebJS.getMessageModel(m));
++    async accept(options = {}) {
++        return this.client.pupPage.evaluate(
++            (id, isVideo, injectAudio) => {
++                return window.WWebJS.acceptCall(id, isVideo, injectAudio);
+             },
+-            this.id._serialized,
+-            searchOptions,
++            this.id,
++            options.video ?? false,
++            options.injectAudio ?? true,
+         );
+-
+-        return messages.map((m) => new Message(this.client, m));
+-    }
+-
+-    /**
+-     * Simulate typing in chat. This will last for 25 seconds.
+-     */
+-    async sendStateTyping() {
+-        return this.client.pupPage.evaluate((chatId) => {
+-            window.WWebJS.sendChatstate('typing', chatId);
+-            return true;
+-        }, this.id._serialized);
+     }
+ 
+     /**
+-     * Simulate recording audio in chat. This will last for 25 seconds.
++     * End an ongoing call
++     * @returns {Promise<boolean>}
+      */
+-    async sendStateRecording() {
+-        return this.client.pupPage.evaluate((chatId) => {
+-            window.WWebJS.sendChatstate('recording', chatId);
+-            return true;
+-        }, this.id._serialized);
++    async end() {
++        return this.client.pupPage.evaluate((id) => {
++            return window.WWebJS.endCall(id);
++        }, this.id);
+     }
+ 
+     /**
+-     * Stops typing or recording in chat immediately.
++     * Play an audio clip into the ongoing call so the other party can hear it
++     * @param {MessageMedia|string} media A MessageMedia instance or a base64 encoded audio string
++     * @returns {Promise<number>} The duration of the played audio in seconds
+      */
+-    async clearState() {
+-        return this.client.pupPage.evaluate((chatId) => {
+-            window.WWebJS.sendChatstate('stop', chatId);
+-            return true;
+-        }, this.id._serialized);
++    async playAudio(media) {
++        const data = typeof media === 'string' ? media : media.data;
++        return this.client.pupPage.evaluate((base64) => {
++            return window.WWebJS.playCallAudio(base64);
++        }, data);
+     }
+ 
+     /**
+-     * Returns the Contact that corresponds to this Chat.
+-     * @returns {Promise<Contact>}
++     * Indicates whether the call is currently connected (the other party has answered)
++     * @returns {Promise<boolean>}
+      */
+-    async getContact() {
+-        return await this.client.getContactById(this.id._serialized);
+-    }
+-
+-    /**
+-     * Returns array of all Labels assigned to this Chat
+-     * @returns {Promise<Array<Label>>}
+-     */
+-    async getLabels() {
+-        return this.client.getChatLabels(this.id._serialized);
+-    }
+-
+-    /**
+-     * Add or remove labels to this Chat
+-     * @param {Array<number|string>} labelIds
+-     * @returns {Promise<void>}
+-     */
+-    async changeLabels(labelIds) {
+-        return this.client.addOrRemoveLabels(labelIds, [this.id._serialized]);
+-    }
+-
+-    /**
+-     * Gets instances of all pinned messages in a chat
+-     * @returns {Promise<Array<Message>>}
+-     */
+-    async getPinnedMessages() {
+-        return this.client.getPinnedMessages(this.id._serialized);
+-    }
+-
+-    /**
+-     * Sync chat history conversation
+-     * @return {Promise<boolean>} True if operation completed successfully, false otherwise.
+-     */
+-    async syncHistory() {
+-        return this.client.syncHistory(this.id._serialized);
+-    }
+-
+-    /**
+-     * Add or edit a customer note
+-     * @see https://faq.whatsapp.com/1433099287594476
+-     * @param {string} note The note to add
+-     * @returns {Promise<void>}
+-     */
+-    async addOrEditCustomerNote(note) {
+-        if (this.isGroup || this.isChannel) return;
+-
+-        return this.client.addOrEditCustomerNote(this.id._serialized, note);
+-    }
+-
+-    /**
+-     * Get a customer note
+-     * @see https://faq.whatsapp.com/1433099287594476
+-     * @returns {Promise<{
+-     *    chatId: string,
+-     *    content: string,
+-     *    createdAt: number,
+-     *    id: string,
+-     *    modifiedAt: number,
+-     *    type: string
+-     * }>}
+-     */
+-    async getCustomerNote() {
+-        if (this.isGroup || this.isChannel) return null;
+-
+-        return this.client.getCustomerNote(this.id._serialized);
++    async isConnected() {
++        return this.client.pupPage.evaluate((id) => {
++            return window.WWebJS.isCallConnected(id);
++        }, this.id);
+     }
+ }
+ 
+-module.exports = Chat;
++module.exports = Call;
+\ No newline at end of file
 diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-index dfa30a5..7d4718e 100644
+index b7e23bc..0c0c3f9 100644
 --- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
 +++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-@@ -483,7 +483,7 @@ exports.LoadUtils = () => {
+@@ -483,7 +483,8 @@ exports.LoadUtils = () => {
              ...extraOptions,
          };
  
 -        // Bot's won't reply if canonicalUrl is set (linking)
 +        delete message.__x_id;
++
          if (botOptions) {
              delete message.canonicalUrl;
          }
-diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js.backup b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js.backup
-new file mode 100644
-index 0000000..dfa30a5
---- /dev/null
-+++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js.backup
-@@ -0,0 +1,1796 @@
-+'use strict';
-+
-+exports.LoadUtils = () => {
-+    window.WWebJS = {};
-+
-+    /**
-+     * Helper function that compares between two WWeb versions. Its purpose is to help the developer to choose the correct code implementation depending on the comparison value and the WWeb version.
-+     * @param {string} lOperand The left operand for the WWeb version string to compare with
-+     * @param {string} operator The comparison operator
-+     * @param {string} rOperand The right operand for the WWeb version string to compare with
-+     * @returns {boolean} Boolean value that indicates the result of the comparison
-+     */
-+    window.WWebJS.compareWwebVersions = (lOperand, operator, rOperand) => {
-+        if (!['>', '>=', '<', '<=', '='].includes(operator)) {
-+            throw new (class _ extends Error {
-+                constructor(m) {
-+                    super(m);
-+                    this.name = 'CompareWwebVersionsError';
-+                }
-+            })('Invalid comparison operator is provided');
-+        }
-+        if (typeof lOperand !== 'string' || typeof rOperand !== 'string') {
-+            throw new (class _ extends Error {
-+                constructor(m) {
-+                    super(m);
-+                    this.name = 'CompareWwebVersionsError';
-+                }
-+            })('A non-string WWeb version type is provided');
-+        }
-+
-+        lOperand = lOperand.replace(/-beta$/, '');
-+        rOperand = rOperand.replace(/-beta$/, '');
-+
-+        while (lOperand.length !== rOperand.length) {
-+            lOperand.length > rOperand.length
-+                ? (rOperand = rOperand.concat('0'))
-+                : (lOperand = lOperand.concat('0'));
-+        }
-+
-+        lOperand = Number(lOperand.replace(/\./g, ''));
-+        rOperand = Number(rOperand.replace(/\./g, ''));
-+
-+        return operator === '>'
-+            ? lOperand > rOperand
-+            : operator === '>='
-+              ? lOperand >= rOperand
-+              : operator === '<'
-+                ? lOperand < rOperand
-+                : operator === '<='
-+                  ? lOperand <= rOperand
-+                  : operator === '='
-+                    ? lOperand === rOperand
-+                    : false;
-+    };
-+
-+    /**
-+     * Target options object description
-+     * @typedef {Object} TargetOptions
-+     * @property {string|number} module The target module
-+     * @property {string} function The function name to get from a module
-+     */
-+    /**
-+     * Function to modify functions
-+     * @param {TargetOptions} target Options specifying the target function to search for modifying
-+     * @param {Function} callback Modified function
-+     */
-+    window.WWebJS.injectToFunction = (target, callback) => {
-+        try {
-+            let module = window.require(target.module);
-+            if (!module) return;
-+
-+            const path = target.function.split('.');
-+            const funcName = path.pop();
-+
-+            for (const key of path) {
-+                if (!module[key]) return;
-+                module = module[key];
-+            }
-+
-+            const originalFunction = module[funcName];
-+            if (typeof originalFunction !== 'function') return;
-+
-+            module[funcName] = ((...args) => {
-+                try {
-+                    return callback(module, originalFunction, ...args);
-+                } catch {
-+                    return originalFunction.apply(module, args);
-+                }
-+            }).bind(module);
-+        } catch {
+@@ -1329,6 +1330,13 @@ exports.LoadUtils = () => {
+     };
+ 
+     window.WWebJS.rejectCall = async (peerJid, id) => {
++        const stack = await window.WWebJS.getCallStackInterface();
++        if (stack && typeof stack.rejectCall === 'function') {
++            await stack.rejectCall();
 +            return;
 +        }
-+    };
 +
-+    window.WWebJS.injectToFunction(
-+        { module: 'WAWebBackendJobsCommon', function: 'mediaTypeFromProtobuf' },
-+        (module, func, ...args) => {
-+            const [proto] = args;
-+            return proto.locationMessage ? null : func(...args);
-+        },
-+    );
-+
-+    window.WWebJS.injectToFunction(
-+        { module: 'WAWebE2EProtoUtils', function: 'typeAttributeFromProtobuf' },
-+        (module, func, ...args) => {
-+            const [proto] = args;
-+            return proto.locationMessage || proto.groupInviteMessage
-+                ? 'text'
-+                : func(...args);
-+        },
-+    );
-+
-+    window.WWebJS.forwardMessage = async (chatId, msgId) => {
-+        const msg =
-+            window.require('WAWebCollections').Msg.get(msgId) ||
-+            (
-+                await window
-+                    .require('WAWebCollections')
-+                    .Msg.getMessagesById([msgId])
-+            )?.messages?.[0];
-+        const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
-+        return await window.require('WAWebChatForwardMessage').forwardMessages({
-+            chat: chat,
-+            msgs: [msg],
-+            multicast: true,
-+            includeCaption: true,
-+            appendedText: undefined,
-+        });
-+    };
-+
-+    window.WWebJS.sendSeen = async (chatId) => {
-+        const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
-+        if (chat) {
-+            window.require('WAWebStreamModel').Stream.markAvailable();
-+            await window.require('WAWebUpdateUnreadChatAction').sendSeen({
-+                chat: chat,
-+                threadId: undefined,
-+            });
-+            window.require('WAWebStreamModel').Stream.markUnavailable();
-+            return true;
-+        }
-+        return false;
-+    };
-+
-+    window.WWebJS.sendMessage = async (chat, content, options = {}) => {
-+        const { getIsNewsletter, getIsBroadcast } =
-+            window.require('WAWebChatGetters');
-+        const isChannel = getIsNewsletter(chat);
-+        const isStatus = getIsBroadcast(chat);
-+
-+        const { findLink } = window.require('WALinkify');
-+
-+        let mediaOptions = {};
-+        if (options.media) {
-+            mediaOptions =
-+                options.sendMediaAsSticker && !isChannel && !isStatus
-+                    ? await window.WWebJS.processStickerData(options.media)
-+                    : await window.WWebJS.processMediaData(options.media, {
-+                          forceSticker: options.sendMediaAsSticker,
-+                          forceGif: options.sendVideoAsGif,
-+                          forceVoice: options.sendAudioAsVoice,
-+                          forceDocument: options.sendMediaAsDocument,
-+                          forceMediaHd: options.sendMediaAsHd,
-+                          sendToChannel: isChannel,
-+                          sendToStatus: isStatus,
-+                      });
-+            mediaOptions.caption = options.caption;
-+            content = options.sendMediaAsSticker
-+                ? undefined
-+                : mediaOptions.preview;
-+            mediaOptions.isViewOnce = options.isViewOnce;
-+            delete options.media;
-+            delete options.sendMediaAsSticker;
-+        }
-+
-+        let quotedMsgOptions = {};
-+        if (options.quotedMessageId) {
-+            let quotedMessage = window
-+                .require('WAWebCollections')
-+                .Msg.get(options.quotedMessageId);
-+            !quotedMessage &&
-+                (quotedMessage = (
-+                    await window
-+                        .require('WAWebCollections')
-+                        .Msg.getMessagesById([options.quotedMessageId])
-+                )?.messages?.[0]);
-+            if (quotedMessage) {
-+                const ReplyUtils = window.require('WAWebMsgReply');
-+                const canReply = ReplyUtils
-+                    ? ReplyUtils.canReplyMsg(quotedMessage.unsafe())
-+                    : quotedMessage.canReply();
-+
-+                if (canReply) {
-+                    quotedMsgOptions = quotedMessage.msgContextInfo(chat);
-+                }
-+            } else {
-+                if (!options.ignoreQuoteErrors) {
-+                    throw new Error('Could not get the quoted message.');
-+                }
-+            }
-+
-+            delete options.ignoreQuoteErrors;
-+            delete options.quotedMessageId;
-+        }
-+
-+        if (options.mentionedJidList) {
-+            options.mentionedJidList = options.mentionedJidList.map((id) =>
-+                window.require('WAWebWidFactory').createWid(id),
-+            );
-+            options.mentionedJidList = options.mentionedJidList.filter(Boolean);
-+        }
-+
-+        if (options.groupMentions) {
-+            options.groupMentions = options.groupMentions.map((e) => ({
-+                groupSubject: e.subject,
-+                groupJid: window.require('WAWebWidFactory').createWid(e.id),
-+            }));
-+        }
-+
-+        let locationOptions = {};
-+        if (options.location) {
-+            let { latitude, longitude, description, url } = options.location;
-+            url = findLink(url)?.href;
-+            url && !description && (description = url);
-+            locationOptions = {
-+                type: 'location',
-+                loc: description,
-+                lat: latitude,
-+                lng: longitude,
-+                clientUrl: url,
-+            };
-+            delete options.location;
-+        }
-+
-+        let pollOptions = {};
-+        if (options.poll) {
-+            const { pollName, pollOptions: _pollOptions } = options.poll;
-+            const { allowMultipleAnswers, messageSecret } =
-+                options.poll.options;
-+            pollOptions = {
-+                kind: 'pollCreation',
-+                type: 'poll_creation',
-+                pollName: pollName,
-+                pollOptions: _pollOptions,
-+                pollSelectableOptionsCount: allowMultipleAnswers ? 0 : 1,
-+                messageSecret:
-+                    Array.isArray(messageSecret) && messageSecret.length === 32
-+                        ? new Uint8Array(messageSecret)
-+                        : window.crypto.getRandomValues(new Uint8Array(32)),
-+            };
-+            delete options.poll;
-+        }
-+
-+        let eventOptions = {};
-+        if (options.event) {
-+            const { name, startTimeTs, eventSendOptions } = options.event;
-+            const { messageSecret } = eventSendOptions;
-+            eventOptions = {
-+                type: 'event_creation',
-+                eventName: name,
-+                eventDescription: eventSendOptions.description,
-+                eventStartTime: startTimeTs,
-+                eventEndTime: eventSendOptions.endTimeTs,
-+                eventLocation: eventSendOptions.location && {
-+                    degreesLatitude: 0,
-+                    degreesLongitude: 0,
-+                    name: eventSendOptions.location,
-+                },
-+                eventJoinLink:
-+                    eventSendOptions.callType === 'none'
-+                        ? null
-+                        : await window
-+                              .require('WAWebGenerateEventCallLink')
-+                              .createEventCallLink(
-+                                  startTimeTs,
-+                                  eventSendOptions.callType,
-+                              ),
-+                isEventCanceled: eventSendOptions.isEventCanceled,
-+                messageSecret:
-+                    Array.isArray(messageSecret) && messageSecret.length === 32
-+                        ? new Uint8Array(messageSecret)
-+                        : window.crypto.getRandomValues(new Uint8Array(32)),
-+            };
-+            delete options.event;
-+        }
-+
-+        let vcardOptions = {};
-+        if (options.contactCard) {
-+            let contact = await window
-+                .require('WAWebCollections')
-+                .Contact.find(options.contactCard);
-+            vcardOptions = {
-+                body: window
-+                    .require('WAWebFrontendVcardUtils')
-+                    .vcardFromContactModel(contact).vcard,
-+                type: 'vcard',
-+                vcardFormattedName: contact.formattedName,
-+            };
-+            delete options.contactCard;
-+        } else if (options.contactCardList) {
-+            let contacts = await Promise.all(
-+                options.contactCardList.map((c) =>
-+                    window.require('WAWebCollections').Contact.find(c),
-+                ),
-+            );
-+            let vcards = contacts.map((c) =>
-+                window
-+                    .require('WAWebFrontendVcardUtils')
-+                    .vcardFromContactModel(c),
-+            );
-+            vcardOptions = {
-+                type: 'multi_vcard',
-+                vcardList: vcards,
-+                body: null,
-+            };
-+            delete options.contactCardList;
-+        } else if (
-+            options.parseVCards &&
-+            typeof content === 'string' &&
-+            content.startsWith('BEGIN:VCARD')
-+        ) {
-+            delete options.parseVCards;
-+            delete options.linkPreview;
-+            try {
-+                const parsed = window
-+                    .require('WAWebVcardParsingUtils')
-+                    .parseVcard(content);
-+                if (parsed) {
-+                    vcardOptions = {
-+                        type: 'vcard',
-+                        vcardFormattedName: window
-+                            .require('WAWebVcardGetNameFromParsed')
-+                            .vcardGetNameFromParsed(parsed),
-+                    };
-+                }
-+            } catch (ignoredError) {
-+                // not a vcard
-+            }
-+        }
-+
-+        if (options.linkPreview) {
-+            delete options.linkPreview;
-+            const link = findLink(content);
-+            if (link) {
-+                let preview = await window
-+                    .require('WAWebLinkPreviewChatAction')
-+                    .getLinkPreview(link);
-+                if (preview && preview.data) {
-+                    preview = preview.data;
-+                    preview.preview = true;
-+                    preview.subtype = 'url';
-+                    options = { ...options, ...preview };
-+                }
-+            }
-+        }
-+
-+        let buttonOptions = {};
-+        if (options.buttons) {
-+            let caption;
-+            if (options.buttons.type === 'chat') {
-+                content = options.buttons.body;
-+                caption = content;
-+            } else {
-+                caption = options.caption ? options.caption : ' '; // Caption can't be empty
-+            }
-+            buttonOptions = {
-+                productHeaderImageRejected: false,
-+                isFromTemplate: false,
-+                isDynamicReplyButtonsMsg: true,
-+                title: options.buttons.title
-+                    ? options.buttons.title
-+                    : undefined,
-+                footer: options.buttons.footer
-+                    ? options.buttons.footer
-+                    : undefined,
-+                dynamicReplyButtons: options.buttons.buttons,
-+                replyButtons: options.buttons.buttons,
-+                caption: caption,
-+            };
-+            delete options.buttons;
-+        }
-+
-+        let listOptions = {};
-+        if (options.list) {
-+            if (
-+                window.require('WAWebConnModel').Conn.platform === 'smba' ||
-+                window.require('WAWebConnModel').Conn.platform === 'smbi'
-+            ) {
-+                throw "[LT01] Whatsapp business can't send this yet";
-+            }
-+            listOptions = {
-+                type: 'list',
-+                footer: options.list.footer,
-+                list: {
-+                    ...options.list,
-+                    listType: 1,
-+                },
-+                body: options.list.description,
-+            };
-+            delete options.list;
-+            delete listOptions.list.footer;
-+        }
-+
-+        const botOptions = {};
-+        if (options.invokedBotWid) {
-+            botOptions.messageSecret = window.crypto.getRandomValues(
-+                new Uint8Array(32),
-+            );
-+            botOptions.botMessageSecret = await window
-+                .require('WAWebBotMessageSecret')
-+                .genBotMsgSecretFromMsgSecret(botOptions.messageSecret);
-+            botOptions.invokedBotWid = window
-+                .require('WAWebWidFactory')
-+                .createWid(options.invokedBotWid);
-+            botOptions.botPersonaId = window
-+                .require('WAWebBotProfileCollection')
-+                .BotProfileCollection.get(options.invokedBotWid).personaId;
-+            delete options.invokedBotWid;
-+        }
-+        const { getMaybeMeLidUser, getMaybeMePnUser } = window.require(
-+            'WAWebUserPrefsMeUser',
-+        );
-+        const lidUser = getMaybeMeLidUser();
-+        const meUser = getMaybeMePnUser();
-+        const newId = await window.require('WAWebMsgKey').newId();
-+        let from = chat.id.isLid() ? lidUser : meUser;
-+        let participant;
-+
-+        if (typeof chat.id?.isGroup === 'function' && chat.id.isGroup()) {
-+            from =
-+                chat.groupMetadata && chat.groupMetadata.isLidAddressingMode
-+                    ? lidUser
-+                    : meUser;
-+            participant = window
-+                .require('WAWebWidFactory')
-+                .asUserWidOrThrow(from);
-+        }
-+
-+        if (typeof chat.id?.isStatus === 'function' && chat.id.isStatus()) {
-+            participant = window
-+                .require('WAWebWidFactory')
-+                .asUserWidOrThrow(from);
-+        }
-+
-+        const newMsgKey = new (window.require('WAWebMsgKey'))({
-+            from: from,
-+            to: chat.id,
-+            id: newId,
-+            participant: participant,
-+            selfDir: 'out',
-+        });
-+
-+        const extraOptions = options.extraOptions || {};
-+        delete options.extraOptions;
-+
-+        const ephemeralFields = window
-+            .require('WAWebGetEphemeralFieldsMsgActionsUtils')
-+            .getEphemeralFields(chat);
-+
-+        const message = {
-+            ...options,
-+            id: newMsgKey,
-+            ack: 0,
-+            body: content,
-+            from: from,
-+            to: chat.id,
-+            local: true,
-+            self: 'out',
-+            t: parseInt(new Date().getTime() / 1000),
-+            isNewMsg: true,
-+            type: 'chat',
-+            ...ephemeralFields,
-+            ...mediaOptions,
-+            ...(mediaOptions.toJSON ? mediaOptions.toJSON() : {}),
-+            ...quotedMsgOptions,
-+            ...locationOptions,
-+            ...pollOptions,
-+            ...eventOptions,
-+            ...vcardOptions,
-+            ...buttonOptions,
-+            ...listOptions,
-+            ...botOptions,
-+            ...extraOptions,
-+        };
-+
-+        // Bot's won't reply if canonicalUrl is set (linking)
-+        if (botOptions) {
-+            delete message.canonicalUrl;
-+        }
-+
-+        if (isChannel) {
-+            const msg = new (window.require('WAWebCollections').Msg.modelClass)(
-+                message,
-+            );
-+            const msgDataFromMsgModel = window
-+                .require('WAWebMsgDataFromModel')
-+                .msgDataFromMsgModel(msg);
-+            const isMedia = Object.keys(mediaOptions).length > 0;
-+            await window
-+                .require('WAWebNewsletterUpdateMsgsRecordsJob')
-+                .addNewsletterMsgsRecords([msgDataFromMsgModel]);
-+            chat.msgs.add(msg);
-+            chat.t = msg.t;
-+
-+            const sendChannelMsgResponse = await window
-+                .require('WAWebNewsletterSendMessageJob')
-+                .sendNewsletterMessageJob({
-+                    msg: msg,
-+                    type:
-+                        message.type === 'chat'
-+                            ? 'text'
-+                            : isMedia
-+                              ? 'media'
-+                              : 'pollCreation',
-+                    newsletterJid: chat.id.toJid(),
-+                    ...(isMedia
-+                        ? {
-+                              mediaMetadata: msg.avParams(),
-+                              mediaHandle: isMedia
-+                                  ? mediaOptions.mediaHandle
-+                                  : null,
-+                          }
-+                        : {}),
-+                });
-+
-+            if (sendChannelMsgResponse.success) {
-+                msg.t = sendChannelMsgResponse.ack.t;
-+                msg.serverId = sendChannelMsgResponse.serverId;
-+            }
-+            msg.updateAck(1, true);
-+            await window
-+                .require('WAWebNewsletterUpdateMsgsRecordsJob')
-+                .updateNewsletterMsgRecord(msg);
-+            return msg;
-+        }
-+
-+        if (isStatus) {
-+            const { backgroundColor, fontStyle } = extraOptions;
-+            const isMedia = Object.keys(mediaOptions).length > 0;
-+            const mediaUpdate = (data) =>
-+                window.require('WAWebMediaUpdateMsg')(data, mediaOptions);
-+            const msg = new (window.require('WAWebCollections').Msg.modelClass)(
-+                {
-+                    ...message,
-+                    author: participant ? participant : null,
-+                    messageSecret: window.crypto.getRandomValues(
-+                        new Uint8Array(32),
-+                    ),
-+                    cannotBeRanked: window
-+                        .require('WAWebStatusGatingUtils')
-+                        .canCheckStatusRankingPosterGating(),
-+                },
-+            );
-+
-+            // for text only
-+            const statusOptions = {
-+                color:
-+                    (backgroundColor &&
-+                        window.WWebJS.assertColor(backgroundColor)) ||
-+                    0xff7acca5,
-+                font: (fontStyle >= 0 && fontStyle <= 7 && fontStyle) || 0,
-+                text: msg.body,
-+            };
-+
-+            await window
-+                .require('WAWebSendStatusMsgAction')
-+                [
-+                    isMedia
-+                        ? 'sendStatusMediaMsgAction'
-+                        : 'sendStatusTextMsgAction'
-+                ](...(isMedia ? [msg, mediaUpdate] : [statusOptions]));
-+
-+            return msg;
-+        }
-+
-+        const [msgPromise, sendMsgResultPromise] = window
-+            .require('WAWebSendMsgChatAction')
-+            .addAndSendMsgToChat(chat, message);
-+        await msgPromise;
-+
-+        if (options.waitUntilMsgSent) await sendMsgResultPromise;
-+
++        // Fallback signaling stanza for older WhatsApp Web builds.
+         const _meUser = window
+             .require('WAWebUserPrefsMeUser')
+             .getMaybeMePnUser();
+@@ -1352,6 +1360,242 @@ exports.LoadUtils = () => {
+         await window.require('WADeprecatedSendIq').deprecatedCastStanza(stanza);
+     };
+ 
++    window.WWebJS.getCallStackInterface = async () => {
 +        return window
-+            .require('WAWebCollections')
-+            .Msg.get(newMsgKey._serialized);
++            .require('WAWebVoipStackInterface')
++            .getVoipStackInterface();
 +    };
 +
-+    window.WWebJS.editMessage = async (msg, content, options = {}) => {
-+        const extraOptions = options.extraOptions || {};
-+        delete options.extraOptions;
++    window.WWebJS.setupCallMediaStream = () => {
++        const store = window.WWebJS;
++        // Route the outgoing microphone through our own graph only while an
++        // injected call is active, so ordinary calls keep using the real
++        // microphone (see teardownCallMediaStream).
++        store._callMediaActive = true;
 +
-+        if (options.mentionedJidList) {
-+            options.mentionedJidList = options.mentionedJidList.map((id) =>
-+                window.require('WAWebWidFactory').createWid(id),
-+            );
-+            options.mentionedJidList = options.mentionedJidList.filter(Boolean);
++        if (store._callMedia && store._callMedia.context.state !== 'closed') {
++            return store._callMedia;
 +        }
 +
-+        if (options.groupMentions) {
-+            options.groupMentions = options.groupMentions.map((e) => ({
-+                groupSubject: e.subject,
-+                groupJid: window.require('WAWebWidFactory').createWid(e.id),
-+            }));
-+        }
++        const AudioContextClass =
++            window.AudioContext || window.webkitAudioContext;
++        const context = new AudioContextClass();
++        const master = context.createGain();
++        master.gain.value = 1;
 +
-+        if (options.linkPreview) {
-+            const { findLink } = window.require('WALinkify');
-+            delete options.linkPreview;
-+            const link = findLink(content);
-+            if (link) {
-+                const preview = await window
-+                    .require('WAWebLinkPreviewChatAction')
-+                    .getLinkPreview(link);
-+                preview.preview = true;
-+                preview.subtype = 'url';
-+                options = { ...options, ...preview };
-+            }
-+        }
++        store._callMedia = { context, master, destinations: [] };
 +
-+        const internalOptions = {
-+            ...options,
-+            ...extraOptions,
-+        };
-+
-+        await window
-+            .require('WAWebSendMessageEditAction')
-+            .sendMessageEdit(msg, content, internalOptions);
-+        return window.require('WAWebCollections').Msg.get(msg.id._serialized);
-+    };
-+
-+    window.WWebJS.toStickerData = async (mediaInfo) => {
-+        if (mediaInfo.mimetype == 'image/webp') return mediaInfo;
-+
-+        const file = window.WWebJS.mediaInfoToFile(mediaInfo);
-+        const webpSticker = await window
-+            .require('WAWebImageUtils')
-+            .toWebpSticker(file);
-+        const webpBuffer = await webpSticker.arrayBuffer();
-+        const data = window.WWebJS.arrayBufferToBase64(webpBuffer);
-+
-+        return {
-+            mimetype: 'image/webp',
-+            data,
-+        };
-+    };
-+
-+    window.WWebJS.processStickerData = async (mediaInfo) => {
-+        if (mediaInfo.mimetype !== 'image/webp')
-+            throw new Error('Invalid media type');
-+
-+        const file = window.WWebJS.mediaInfoToFile(mediaInfo);
-+        let filehash = await window.WWebJS.getFileHash(file);
-+        let mediaKey = await window.WWebJS.generateHash(32);
-+
-+        const controller = new AbortController();
-+        const uploadedInfo = await window
-+            .require('WAWebUploadManager')
-+            .encryptAndUpload({
-+                blob: file,
-+                type: 'sticker',
-+                signal: controller.signal,
-+                mediaKey,
-+                uploadQpl: window
-+                    .require('WAWebStartMediaUploadQpl')
-+                    .startMediaUploadQpl({
-+                        entryPoint: 'MediaUpload',
-+                    }),
-+            });
-+
-+        const stickerInfo = {
-+            ...uploadedInfo,
-+            clientUrl: uploadedInfo.url,
-+            deprecatedMms3Url: uploadedInfo.url,
-+            uploadhash: uploadedInfo.encFilehash,
-+            size: file.size,
-+            type: 'sticker',
-+            filehash,
-+        };
-+
-+        return stickerInfo;
-+    };
-+
-+    window.WWebJS.processMediaData = async (
-+        mediaInfo,
-+        {
-+            forceSticker,
-+            forceGif,
-+            forceVoice,
-+            forceDocument,
-+            forceMediaHd,
-+            sendToChannel,
-+            sendToStatus,
-+        },
-+    ) => {
-+        const file = window.WWebJS.mediaInfoToFile(mediaInfo);
-+        const OpaqueData = window.require('WAWebMediaOpaqueData');
-+        const opaqueData = await OpaqueData.createFromData(
-+            file,
-+            mediaInfo.mimetype,
-+        );
-+        const mediaParams = {
-+            asSticker: forceSticker,
-+            asGif: forceGif,
-+            isPtt: forceVoice,
-+            asDocument: forceDocument,
-+        };
-+
-+        if (forceMediaHd && file.type.indexOf('image/') === 0) {
-+            mediaParams.maxDimension = 2560;
-+        }
-+
-+        const mediaPrep = window
-+            .require('WAWebPrepRawMedia')
-+            .prepRawMedia(opaqueData, mediaParams);
-+        const mediaData = await mediaPrep.waitForPrep();
-+        const mediaObject = window
-+            .require('WAWebMediaStorage')
-+            .getOrCreateMediaObject(mediaData.filehash);
-+        const mediaType = window.require('WAWebMmsMediaTypes').msgToMediaType({
-+            type: mediaData.type,
-+            isGif: mediaData.isGif,
-+            isNewsletter: sendToChannel,
-+        });
-+
-+        if (!mediaData.filehash) {
-+            throw new Error('media-fault: sendToChat filehash undefined');
-+        }
-+
-+        if (
-+            (forceVoice && mediaData.type === 'ptt') ||
-+            (sendToStatus && mediaData.type === 'audio')
-+        ) {
-+            const waveform = mediaObject.contentInfo.waveform;
-+            mediaData.waveform =
-+                waveform || (await window.WWebJS.generateWaveform(file));
-+        }
-+
-+        if (!(mediaData.mediaBlob instanceof OpaqueData)) {
-+            mediaData.mediaBlob = await OpaqueData.createFromData(
-+                mediaData.mediaBlob,
-+                mediaData.mediaBlob.type,
-+            );
-+        }
-+
-+        mediaData.renderableUrl = mediaData.mediaBlob.url();
-+        mediaObject.consolidate(mediaData.toJSON());
-+
-+        mediaData.mediaBlob.autorelease();
-+        const shouldUseMediaCache = window
-+            .require('WAWebMediaDataUtils')
-+            .shouldUseMediaCache(
-+                window.require('WAWebMmsMediaTypes').castToV4(mediaObject.type),
-+            );
-+        if (shouldUseMediaCache && mediaData.mediaBlob instanceof OpaqueData) {
-+            const formData = mediaData.mediaBlob.formData();
-+            window
-+                .require('WAWebMediaInMemoryBlobCache')
-+                .InMemoryMediaBlobCache.put(mediaObject.filehash, formData);
-+        }
-+
-+        const dataToUpload = {
-+            mimetype: mediaData.mimetype,
-+            mediaObject,
-+            mediaType,
-+            ...(sendToChannel
-+                ? {
-+                      calculateToken: window.require('WAMediaCalculateFilehash')
-+                          .getRandomFilehash,
-+                  }
-+                : {}),
-+        };
-+
-+        const { uploadMedia, uploadUnencryptedMedia } = window.require(
-+            'WAWebMediaMmsV4Upload',
-+        );
-+        const uploadedMedia = !sendToChannel
-+            ? await uploadMedia(dataToUpload)
-+            : await uploadUnencryptedMedia(dataToUpload);
-+
-+        const mediaEntry = uploadedMedia.mediaEntry;
-+        if (!mediaEntry) {
-+            throw new Error('upload failed: media entry was not created');
-+        }
-+
-+        mediaData.set({
-+            clientUrl: mediaEntry.mmsUrl,
-+            deprecatedMms3Url: mediaEntry.deprecatedMms3Url,
-+            directPath: mediaEntry.directPath,
-+            mediaKey: mediaEntry.mediaKey,
-+            mediaKeyTimestamp: mediaEntry.mediaKeyTimestamp,
-+            filehash: mediaObject.filehash,
-+            encFilehash: mediaEntry.encFilehash,
-+            uploadhash: mediaEntry.uploadHash,
-+            size: mediaObject.size,
-+            streamingSidecar: mediaEntry.sidecar,
-+            firstFrameSidecar: mediaEntry.firstFrameSidecar,
-+            mediaHandle: sendToChannel ? mediaEntry.handle : null,
-+        });
-+
-+        return mediaData;
-+    };
-+
-+    window.WWebJS.getMessageModel = (message) => {
-+        const msg = message.serialize();
-+
-+        const { findLinks } = window.require('WALinkify');
-+
-+        msg.isEphemeral = message.isEphemeral;
-+        msg.isStatusV3 = message.isStatusV3;
-+        msg.links = findLinks(
-+            message.mediaObject ? message.caption : message.body,
-+        ).map((link) => ({
-+            link: link.href,
-+            isSuspicious: Boolean(
-+                link.suspiciousCharacters && link.suspiciousCharacters.size,
-+            ),
-+        }));
-+
-+        if (msg.buttons) {
-+            msg.buttons = msg.buttons.serialize();
-+        }
-+        if (msg.dynamicReplyButtons) {
-+            msg.dynamicReplyButtons = JSON.parse(
-+                JSON.stringify(msg.dynamicReplyButtons),
-+            );
-+        }
-+        if (msg.replyButtons) {
-+            msg.replyButtons = JSON.parse(JSON.stringify(msg.replyButtons));
-+        }
-+
-+        if (typeof msg.id.remote === 'object') {
-+            msg.id = Object.assign({}, msg.id, {
-+                remote: msg.id.remote._serialized,
-+            });
-+        }
-+
-+        delete msg.pendingAckUpdate;
-+
-+        return msg;
-+    };
-+
-+    window.WWebJS.getChat = async (chatId, { getAsModel = true } = {}) => {
-+        const isChannel = /@\w*newsletter\b/.test(chatId);
-+        const chatWid = window.require('WAWebWidFactory').createWid(chatId);
-+        let chat;
-+
-+        if (isChannel) {
-+            try {
-+                chat = window
-+                    .require('WAWebCollections')
-+                    .WAWebNewsletterCollection.get(chatId);
-+                if (!chat) {
-+                    await window
-+                        .require('WAWebLoadNewsletterPreviewChatAction')
-+                        .loadNewsletterPreviewChat(chatId);
-+                    chat = await window
-+                        .require('WAWebCollections')
-+                        .WAWebNewsletterCollection.find(chatWid);
++        // WhatsApp acquires the microphone through this single entry point.
++        // Patch it once so the outgoing audio track is fed from our own graph
++        // instead of a physical device, but only while injection is active so
++        // normal calls are left untouched. A fresh destination is handed out on
++        // every call because WhatsApp stops the track when the stream is
++        // disposed, which would permanently silence a shared destination.
++        const mediaModule = window.require('WAGetUserMedia');
++        if (!mediaModule._wwebjsPatched) {
++            const original = mediaModule.getUserMedia;
++            mediaModule._wwebjsPatched = true;
++            mediaModule.getUserMedia = (constraints) => {
++                const media = window.WWebJS._callMedia;
++                if (
++                    (constraints && constraints.video) ||
++                    !media ||
++                    !window.WWebJS._callMediaActive
++                ) {
++                    return original(constraints);
 +                }
-+            } catch (ignoredError) {
-+                chat = null;
-+            }
-+        } else {
-+            chat =
-+                window.require('WAWebCollections').Chat.get(chatWid) ||
-+                (
-+                    await window
-+                        .require('WAWebFindChatAction')
-+                        .findOrCreateLatestChat(chatWid)
-+                )?.chat;
-+        }
-+
-+        return getAsModel && chat
-+            ? await window.WWebJS.getChatModel(chat, { isChannel: isChannel })
-+            : chat;
-+    };
-+
-+    window.WWebJS.getChannelMetadata = async (inviteCode) => {
-+        const role = window
-+            .require('WAWebNewsletterModelUtils')
-+            .getRoleByIdentifier(inviteCode);
-+        const response = await window
-+            .require('WAWebNewsletterMetadataQueryJob')
-+            .queryNewsletterMetadataByInviteCode(inviteCode, role);
-+
-+        const picUrl =
-+            response.newsletterPictureMetadataMixin?.picture[0]
-+                ?.queryPictureDirectPathOrEmptyResponseMixinGroup.value
-+                .directPath;
-+
-+        return {
-+            id: response.idJid,
-+            createdAtTs:
-+                response.newsletterCreationTimeMetadataMixin.creationTimeValue,
-+            titleMetadata: {
-+                title: response.newsletterNameMetadataMixin.nameElementValue,
-+                updatedAtTs:
-+                    response.newsletterNameMetadataMixin.nameUpdateTime,
-+            },
-+            descriptionMetadata: {
-+                description:
-+                    response.newsletterDescriptionMetadataMixin
-+                        .descriptionQueryDescriptionResponseMixin.elementValue,
-+                updatedAtTs:
-+                    response.newsletterDescriptionMetadataMixin
-+                        .descriptionQueryDescriptionResponseMixin.updateTime,
-+            },
-+            inviteLink: `https://whatsapp.com/channel/${response.newsletterInviteLinkMetadataMixin.inviteCode}`,
-+            membershipType: role,
-+            stateType: response.newsletterStateMetadataMixin.stateType,
-+            pictureUrl: picUrl ? `https://pps.whatsapp.net${picUrl}` : null,
-+            subscribersCount:
-+                response.newsletterSubscribersMetadataMixin.subscribersCount,
-+            isVerified:
-+                response.newsletterVerificationMetadataMixin
-+                    .verificationState === 'verified',
-+        };
-+    };
-+
-+    window.WWebJS.getChats = async () => {
-+        const chats = window.require('WAWebCollections').Chat.getModelsArray();
-+        const chatPromises = chats.map((chat) =>
-+            window.WWebJS.getChatModel(chat),
-+        );
-+        return await Promise.all(chatPromises);
-+    };
-+
-+    window.WWebJS.getChannels = async () => {
-+        const channels = window
-+            .require('WAWebCollections')
-+            .WAWebNewsletterCollection.getModelsArray();
-+        const channelPromises = channels?.map((channel) =>
-+            window.WWebJS.getChatModel(channel, { isChannel: true }),
-+        );
-+        return await Promise.all(channelPromises);
-+    };
-+
-+    window.WWebJS.getChatModel = async (chat, { isChannel = false } = {}) => {
-+        if (!chat) return null;
-+
-+        const model = chat.serialize();
-+        model.isGroup = false;
-+        model.isMuted = chat.mute?.expiration !== 0;
-+        if (isChannel) {
-+            model.isChannel = window
-+                .require('WAWebChatGetters')
-+                .getIsNewsletter(chat);
-+        } else {
-+            model.formattedTitle = chat.formattedTitle;
-+        }
-+
-+        if (chat.groupMetadata) {
-+            model.isGroup = true;
-+            const chatWid = window
-+                .require('WAWebWidFactory')
-+                .createWid(chat.id._serialized);
-+            const groupMetadata =
-+                window.require('WAWebCollections').GroupMetadata ||
-+                window.require('WAWebCollections').WAWebGroupMetadataCollection;
-+            await groupMetadata.update(chatWid);
-+            const { toPn } = window.require('WAWebLidMigrationUtils');
-+            const serializedMetadata = chat.groupMetadata.serialize();
-+            for (const p of serializedMetadata.participants || []) {
-+                p.id = toPn(p.id) ?? p.id;
-+            }
-+            model.groupMetadata = serializedMetadata;
-+            model.isReadOnly = chat.groupMetadata.announce;
-+        }
-+
-+        if (chat.newsletterMetadata) {
-+            const newsletterMetadata =
-+                window.require('WAWebCollections')
-+                    .NewsletterMetadataCollection ||
-+                window.require('WAWebCollections')
-+                    .WAWebNewsletterMetadataCollection;
-+            await newsletterMetadata.update(chat.id);
-+            model.channelMetadata = chat.newsletterMetadata.serialize();
-+            model.channelMetadata.createdAtTs =
-+                chat.newsletterMetadata.creationTime;
-+        }
-+
-+        model.lastMessage = null;
-+        if (model.msgs && model.msgs.length) {
-+            const lastMessage = chat.lastReceivedKey
-+                ? window
-+                      .require('WAWebCollections')
-+                      .Msg.get(chat.lastReceivedKey._serialized) ||
-+                  (
-+                      await window
-+                          .require('WAWebCollections')
-+                          .Msg.getMessagesById([
-+                              chat.lastReceivedKey._serialized,
-+                          ])
-+                  )?.messages?.[0]
-+                : null;
-+            lastMessage &&
-+                (model.lastMessage =
-+                    window.WWebJS.getMessageModel(lastMessage));
-+        }
-+
-+        delete model.msgs;
-+        delete model.msgUnsyncedButtonReplyMsgs;
-+        delete model.unsyncedButtonReplies;
-+
-+        return model;
-+    };
-+
-+    window.WWebJS.getContactModel = (contact) => {
-+        let res = contact.serialize();
-+
-+        const wid = window
-+            .require('WAWebWidFactory')
-+            .createWidFromWidLike(contact.id);
-+        if (wid.isLid() && contact.phoneNumber) {
-+            res.id = contact.phoneNumber;
-+        }
-+
-+        res.isBusiness =
-+            contact.isBusiness === undefined ? false : contact.isBusiness;
-+
-+        if (contact.businessProfile) {
-+            res.businessProfile = contact.businessProfile.serialize();
-+        }
-+
-+        res.isBlocked = contact.isContactBlocked;
-+        if (!res.isBlocked) {
-+            const alt = window
-+                .require('WAWebApiContact')
-+                .getAlternateUserWid(wid);
-+            if (alt) {
-+                res.isBlocked = !!window
-+                    .require('WAWebCollections')
-+                    .Blocklist.get(alt);
-+            }
-+        }
-+
-+        const ContactMethods = window.require('WAWebContactGetters');
-+        res.isMe = ContactMethods.getIsMe(contact);
-+        res.isUser = ContactMethods.getIsUser(contact);
-+        res.isGroup = ContactMethods.getIsGroup(contact);
-+        res.isWAContact = ContactMethods.getIsWAContact(contact);
-+        res.userid = ContactMethods.getUserid(contact);
-+        res.verifiedName = ContactMethods.getVerifiedName(contact);
-+        res.verifiedLevel = ContactMethods.getVerifiedLevel(contact);
-+        res.statusMute = ContactMethods.getStatusMute(contact);
-+        res.name = ContactMethods.getName(contact);
-+        res.shortName = ContactMethods.getShortName(contact);
-+        res.pushname = ContactMethods.getPushname(contact);
-+
-+        const { getIsMyContact } = window.require(
-+            'WAWebFrontendContactGetters',
-+        );
-+        res.isMyContact = getIsMyContact(contact);
-+        res.isEnterprise = ContactMethods.getIsEnterprise(contact);
-+
-+        return res;
-+    };
-+
-+    window.WWebJS.getContact = async (contactId) => {
-+        const contactWid = window
-+            .require('WAWebWidFactory')
-+            .createWid(contactId);
-+        const contact = await window
-+            .require('WAWebCollections')
-+            .Contact.find(contactWid);
-+        if (contact.isBusiness || contact.isEnterprise) {
-+            const bizProfile = await window
-+                .require('WAWebCollections')
-+                .BusinessProfile.find(contactWid);
-+            bizProfile.profileOptions && (contact.businessProfile = bizProfile);
-+        }
-+        return window.WWebJS.getContactModel(contact);
-+    };
-+
-+    window.WWebJS.getContacts = () => {
-+        const contacts = window
-+            .require('WAWebCollections')
-+            .Contact.getModelsArray();
-+        return Promise.all(
-+            contacts.map(async (contact) => {
-+                if (contact.isBusiness || contact.isEnterprise) {
-+                    await window
-+                        .require('WAWebCollections')
-+                        .BusinessProfile.find(contact.id)
-+                        .catch(() => {});
-+                }
-+                return window.WWebJS.getContactModel(contact);
-+            }),
-+        );
-+    };
-+
-+    window.WWebJS.mediaInfoToFile = ({ data, mimetype, filename }) => {
-+        const binaryData = window.atob(data);
-+
-+        const buffer = new ArrayBuffer(binaryData.length);
-+        const view = new Uint8Array(buffer);
-+        for (let i = 0; i < binaryData.length; i++) {
-+            view[i] = binaryData.charCodeAt(i);
-+        }
-+
-+        const blob = new Blob([buffer], { type: mimetype });
-+        return new File([blob], filename, {
-+            type: mimetype,
-+            lastModified: Date.now(),
-+        });
-+    };
-+
-+    /**
-+     * Resolves the media blob and metadata for a message.
-+     * Shared by downloadMedia and downloadMediaStream.
-+     * @param {string} msgId
-+     * @returns {Promise<{blob: Blob, mimetype: string, filename: string, filesize: number}|null>}
-+     */
-+    window.WWebJS.resolveMediaBlob = async (msgId) => {
-+        const { Msg } = window.require('WAWebCollections');
-+        const msg =
-+            Msg.get(msgId) ||
-+            (await Msg.getMessagesById([msgId]))?.messages?.[0];
-+
-+        if (
-+            !msg ||
-+            !msg.mediaData ||
-+            msg.mediaData.mediaStage === 'REUPLOADING'
-+        ) {
-+            return null;
-+        }
-+
-+        // Always call internal downloadMedia - never skip based on
-+        // mediaStage, because cache eviction can leave stage=RESOLVED
-+        // with empty InMemoryMediaBlobCache.
-+        await msg.downloadMedia({
-+            downloadEvenIfExpensive: true,
-+            rmrReason: 1,
-+            isUserInitiated: true,
-+        });
-+
-+        if (
-+            msg.mediaData.mediaStage.includes('ERROR') ||
-+            msg.mediaData.mediaStage === 'FETCHING'
-+        ) {
-+            return null;
-+        }
-+
-+        const cached = window
-+            .require('WAWebMediaInMemoryBlobCache')
-+            .InMemoryMediaBlobCache.get(msg.mediaObject?.filehash);
-+
-+        let blob;
-+        if (cached) {
-+            blob = cached;
-+        } else if (msg.mediaObject?.mediaBlob) {
-+            blob = msg.mediaObject.mediaBlob.forceToBlob();
-+        }
-+
-+        if (!blob) return null;
-+
-+        return {
-+            blob,
-+            mimetype: msg.mimetype,
-+            filename: msg.filename,
-+            filesize: msg.size,
-+        };
-+    };
-+
-+    window.WWebJS.arrayBufferToBase64 = (arrayBuffer) => {
-+        let binary = '';
-+        const bytes = new Uint8Array(arrayBuffer);
-+        const len = bytes.byteLength;
-+        for (let i = 0; i < len; i++) {
-+            binary += String.fromCharCode(bytes[i]);
-+        }
-+        return window.btoa(binary);
-+    };
-+
-+    window.WWebJS.arrayBufferToBase64Async = (arrayBuffer) =>
-+        new Promise((resolve, reject) => {
-+            const blob = new Blob([arrayBuffer], {
-+                type: 'application/octet-stream',
-+            });
-+            const fileReader = new FileReader();
-+            fileReader.onload = () => {
-+                const [, data] = fileReader.result.split(',');
-+                resolve(data);
++                const destination =
++                    media.context.createMediaStreamDestination();
++                media.master.connect(destination);
++                media.destinations.push(destination);
++                return Promise.resolve(destination.stream);
 +            };
-+            fileReader.onerror = (e) => reject(e);
-+            fileReader.readAsDataURL(blob);
-+        });
-+
-+    window.WWebJS.getFileHash = async (data) => {
-+        let buffer = await data.arrayBuffer();
-+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-+        return btoa(String.fromCharCode(...new Uint8Array(hashBuffer)));
-+    };
-+
-+    window.WWebJS.generateHash = async (length) => {
-+        var result = '';
-+        var characters =
-+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-+        var charactersLength = characters.length;
-+        for (var i = 0; i < length; i++) {
-+            result += characters.charAt(
-+                Math.floor(Math.random() * charactersLength),
-+            );
 +        }
-+        return result;
++
++        return store._callMedia;
 +    };
 +
-+    window.WWebJS.generateWaveform = async (audioFile) => {
-+        try {
-+            const audioData = await audioFile.arrayBuffer();
-+            const audioContext = new AudioContext();
-+            const audioBuffer = await audioContext.decodeAudioData(audioData);
++    window.WWebJS.teardownCallMediaStream = () => {
++        const media = window.WWebJS._callMedia;
++        window.WWebJS._callMediaActive = false;
++        if (!media) return;
 +
-+            const rawData = audioBuffer.getChannelData(0);
-+            const samples = 64;
-+            const blockSize = Math.floor(rawData.length / samples);
-+            const filteredData = [];
-+            for (let i = 0; i < samples; i++) {
-+                const blockStart = blockSize * i;
-+                let sum = 0;
-+                for (let j = 0; j < blockSize; j++) {
-+                    sum = sum + Math.abs(rawData[blockStart + j]);
-+                }
-+                filteredData.push(sum / blockSize);
++        // Detach the destinations handed out during the call so the next call
++        // starts from a clean graph and the real microphone is used again.
++        for (const destination of media.destinations) {
++            try {
++                media.master.disconnect(destination);
++            } catch {
++                // The destination was already disconnected by WhatsApp.
 +            }
-+
-+            const multiplier = Math.pow(Math.max(...filteredData), -1);
-+            const normalizedData = filteredData.map((n) => n * multiplier);
-+
-+            const waveform = new Uint8Array(
-+                normalizedData.map((n) => Math.floor(100 * n)),
-+            );
-+
-+            return waveform;
-+        } catch (ignoredError) {
-+            return undefined;
 +        }
++        media.destinations = [];
 +    };
 +
-+    window.WWebJS.sendClearChat = async (chatId) => {
-+        let chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
-+        if (chat !== undefined) {
-+            await window.require('WAWebChatClearBridge').sendClear(chat, false);
-+            return true;
++    window.WWebJS.playCallAudio = async (base64) => {
++        const { context, master } = window.WWebJS.setupCallMediaStream();
++        if (context.state === 'suspended') {
++            await context.resume();
 +        }
-+        return false;
++
++        const binary = atob(base64);
++        const bytes = new Uint8Array(binary.length);
++        for (let i = 0; i < binary.length; i++) {
++            bytes[i] = binary.charCodeAt(i);
++        }
++
++        const buffer = await context.decodeAudioData(bytes.buffer);
++        const source = context.createBufferSource();
++        source.buffer = buffer;
++        source.connect(master);
++
++        return new Promise((resolve) => {
++            source.onended = () => resolve(buffer.duration);
++            source.start();
++        });
 +    };
 +
-+    window.WWebJS.sendDeleteChat = async (chatId) => {
-+        let chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
-+        if (chat !== undefined) {
-+            await window.require('WAWebDeleteChatAction').sendDelete(chat);
-+            return true;
++    window.WWebJS.acceptCall = async (
++        callId,
++        isVideo = false,
++        injectAudio = true,
++    ) => {
++        if (injectAudio) {
++            window.WWebJS.setupCallMediaStream();
 +        }
-+        return false;
-+    };
-+
-+    window.WWebJS.sendChatstate = async (state, chatId) => {
-+        chatId = window.require('WAWebWidFactory').createWid(chatId);
-+
-+        const ChatState = window.require('WAWebChatStateBridge');
-+        switch (state) {
-+            case 'typing':
-+                await ChatState.sendChatStateComposing(chatId);
-+                break;
-+            case 'recording':
-+                await ChatState.sendChatStateRecording(chatId);
-+                break;
-+            case 'stop':
-+                await ChatState.sendChatStatePaused(chatId);
-+                break;
-+            default:
-+                throw 'Invalid chatstate';
-+        }
-+
++        const stack = await window.WWebJS.getCallStackInterface();
++        await stack.acceptCall(callId, isVideo);
 +        return true;
 +    };
 +
-+    window.WWebJS.getLabelModel = (label) => {
-+        let res = label.serialize();
-+        res.hexColor = label.hexColor;
-+
-+        return res;
-+    };
-+
-+    window.WWebJS.getLabels = () => {
-+        const labels = window
-+            .require('WAWebCollections')
-+            .Label.getModelsArray();
-+        return labels.map((label) => window.WWebJS.getLabelModel(label));
-+    };
-+
-+    window.WWebJS.getLabel = (labelId) => {
-+        const label = window.require('WAWebCollections').Label.get(labelId);
-+        return window.WWebJS.getLabelModel(label);
-+    };
-+
-+    window.WWebJS.getChatLabels = async (chatId) => {
-+        const chat = await window.WWebJS.getChat(chatId);
-+        return (chat.labels || []).map((id) => window.WWebJS.getLabel(id));
-+    };
-+
-+    window.WWebJS.getOrderDetail = async (orderId, token, chatId) => {
-+        const chatWid = window.require('WAWebWidFactory').createWid(chatId);
-+        return window
-+            .require('WAWebBizOrderBridge')
-+            .queryOrder(chatWid, orderId, 80, 80, token);
-+    };
-+
-+    window.WWebJS.getProductMetadata = async (productId) => {
-+        let sellerId = window.require('WAWebConnModel').Conn.wid;
-+        let product = await window
-+            .require('WAWebBizProductCatalogBridge')
-+            .queryProduct(sellerId, productId);
-+        if (product && product.data) {
-+            return product.data;
-+        }
-+
-+        return undefined;
-+    };
-+
-+    window.WWebJS.rejectCall = async (peerJid, id) => {
-+        let userId = window
-+            .require('WAWebUserPrefsMeUser')
-+            .getMaybeMePnUser()._serialized;
-+
-+        const stanza = window.require('WAWap').wap(
-+            'call',
-+            {
-+                id: window.require('WAWap').generateId(),
-+                from: userId,
-+                to: peerJid,
-+            },
-+            [
-+                window.require('WAWap').wap('reject', {
-+                    'call-id': id,
-+                    'call-creator': peerJid,
-+                    count: '0',
-+                }),
-+            ],
++    window.WWebJS.endCall = async (callId) => {
++        const stack = await window.WWebJS.getCallStackInterface();
++        const { CALL_TERM_REASON } = window.require(
++            'WAWebWamEnumCallTermReason',
 +        );
-+        await window.require('WADeprecatedSendIq').deprecatedCastStanza(stanza);
++        await stack.endCall(callId, CALL_TERM_REASON.ENDED_BY_USER);
++        window.WWebJS.teardownCallMediaStream();
++        return true;
 +    };
 +
-+    window.WWebJS.cropAndResizeImage = async (media, options = {}) => {
-+        if (!media.mimetype.includes('image'))
-+            throw new Error('Media is not an image');
-+
-+        if (options.mimetype && !options.mimetype.includes('image'))
-+            delete options.mimetype;
-+
-+        options = Object.assign(
-+            {
-+                size: 640,
-+                mimetype: media.mimetype,
-+                quality: 0.75,
-+                asDataUrl: false,
-+            },
-+            options,
-+        );
-+
-+        const img = await new Promise((resolve, reject) => {
-+            const img = new Image();
-+            img.onload = () => resolve(img);
-+            img.onerror = reject;
-+            img.src = `data:${media.mimetype};base64,${media.data}`;
-+        });
-+
-+        const sl = Math.min(img.width, img.height);
-+        const sx = Math.floor((img.width - sl) / 2);
-+        const sy = Math.floor((img.height - sl) / 2);
-+
-+        const canvas = document.createElement('canvas');
-+        canvas.width = options.size;
-+        canvas.height = options.size;
-+
-+        const ctx = canvas.getContext('2d');
-+        ctx.drawImage(img, sx, sy, sl, sl, 0, 0, options.size, options.size);
-+
-+        const dataUrl = canvas.toDataURL(options.mimetype, options.quality);
-+
-+        if (options.asDataUrl) return dataUrl;
-+
-+        return Object.assign(media, {
-+            mimetype: options.mimetype,
-+            data: dataUrl.replace(`data:${options.mimetype};base64,`, ''),
-+        });
-+    };
-+
-+    window.WWebJS.setPicture = async (chatId, media) => {
-+        const thumbnail = await window.WWebJS.cropAndResizeImage(media, {
-+            asDataUrl: true,
-+            mimetype: 'image/jpeg',
-+            size: 96,
-+        });
-+        const profilePic = await window.WWebJS.cropAndResizeImage(media, {
-+            asDataUrl: true,
-+            mimetype: 'image/jpeg',
-+            size: 640,
-+        });
-+
-+        const chatWid = window.require('WAWebWidFactory').createWid(chatId);
-+        try {
-+            const collection =
-+                window
-+                    .require('WAWebCollections')
-+                    .ProfilePicThumb.get(chatId) ||
-+                (await window
-+                    .require('WAWebCollections')
-+                    .ProfilePicThumb.find(chatId));
-+            if (!collection?.canSet()) return false;
-+
-+            const res = await window
-+                .require('WAWebContactProfilePicThumbBridge')
-+                .sendSetPicture(chatWid, thumbnail, profilePic);
-+            return res ? res.status === 200 : false;
-+        } catch (err) {
-+            if (err.name === 'ServerStatusCodeError') return false;
-+            throw err;
++    window.WWebJS.getOngoingCall = () => {
++        // lastActiveCall keeps pointing at the previous call even after it ends,
++        // so a call in the ended state (0) is treated as no ongoing call.
++        const call = window.require('WAWebCallCollection').lastActiveCall;
++        if (
++            !call ||
++            (typeof call.getState === 'function' && call.getState() === 0)
++        ) {
++            return null;
 +        }
++        return call;
 +    };
 +
-+    window.WWebJS.deletePicture = async (chatid) => {
-+        const chatWid = window.require('WAWebWidFactory').createWid(chatid);
-+        try {
-+            const collection = window
-+                .require('WAWebCollections')
-+                .ProfilePicThumb.get(chatid);
-+            if (!collection.canDelete()) return;
-+
-+            const res = await window
-+                .require('WAWebContactProfilePicThumbBridge')
-+                .requestDeletePicture(chatWid);
-+            return res ? res.status === 200 : false;
-+        } catch (err) {
-+            if (err.name === 'ServerStatusCodeError') return false;
-+            throw err;
-+        }
-+    };
-+
-+    window.WWebJS.getProfilePicThumbToBase64 = async (chatWid) => {
-+        const profilePicCollection = await window
-+            .require('WAWebCollections')
-+            .ProfilePicThumb.find(chatWid);
-+
-+        const _readImageAsBase64 = (imageBlob) => {
-+            return new Promise((resolve) => {
-+                const reader = new FileReader();
-+                reader.onloadend = function () {
-+                    const base64Image = reader.result;
-+                    if (base64Image == null) {
-+                        resolve(undefined);
-+                    } else {
-+                        const base64Data = base64Image.toString().split(',')[1];
-+                        resolve(base64Data);
-+                    }
-+                };
-+                reader.readAsDataURL(imageBlob);
-+            });
-+        };
-+
-+        if (profilePicCollection?.img) {
-+            try {
-+                const response = await fetch(profilePicCollection.img);
-+                if (response.ok) {
-+                    const imageBlob = await response.blob();
-+                    if (imageBlob) {
-+                        const base64Image = await _readImageAsBase64(imageBlob);
-+                        return base64Image;
-+                    }
-+                }
-+            } catch (ignoredError) {
-+                /* empty */
-+            }
-+        }
-+        return undefined;
-+    };
-+
-+    window.WWebJS.getAddParticipantsRpcResult = async (
-+        groupWid,
-+        participantWid,
++    window.WWebJS.startCall = async (
++        chatId,
++        isVideo = false,
++        waitForAnswer = false,
++        timeout = 60000,
++        injectAudio = true,
 +    ) => {
-+        const iqTo = window.require('WAWebWidToJid').widToGroupJid(groupWid);
-+
-+        const participantArgs = [
-+            {
-+                participantJid: window
-+                    .require('WAWebWidToJid')
-+                    .widToUserJid(participantWid),
-+            },
-+        ];
-+
-+        let rpcResult, resultArgs;
-+        const data = {
-+            name: undefined,
-+            code: undefined,
-+            inviteV4Code: undefined,
-+            inviteV4CodeExp: undefined,
-+        };
-+
-+        try {
-+            rpcResult = await window
-+                .require('WASmaxGroupsAddParticipantsRPC')
-+                .sendAddParticipantsRPC({ participantArgs, iqTo });
-+            resultArgs =
-+                rpcResult.value.addParticipant[0]
-+                    .addParticipantsParticipantAddedOrNonRegisteredWaUserParticipantErrorLidResponseMixinGroup
-+                    .value.addParticipantsParticipantMixins;
-+        } catch (ignoredError) {
-+            data.code = 400;
-+            return data;
++        if (injectAudio) {
++            window.WWebJS.setupCallMediaStream();
 +        }
 +
-+        if (rpcResult.name === 'AddParticipantsResponseSuccess') {
-+            const code = resultArgs?.value.error || '200';
-+            data.name = resultArgs?.name;
-+            data.code = +code;
-+            data.inviteV4Code = resultArgs?.value.addRequestCode;
-+            data.inviteV4CodeExp =
-+                resultArgs?.value.addRequestExpiration?.toString();
-+        } else if (rpcResult.name === 'AddParticipantsResponseClientError') {
-+            const { code: code } =
-+                rpcResult.value.errorAddParticipantsClientErrors.value;
-+            data.code = +code;
-+        } else if (rpcResult.name === 'AddParticipantsResponseServerError') {
-+            const { code: code } = rpcResult.value.errorServerErrors.value;
-+            data.code = +code;
-+        }
-+
-+        return data;
-+    };
-+
-+    window.WWebJS.membershipRequestAction = async (
-+        groupId,
-+        action,
-+        requesterIds,
-+        sleep,
-+    ) => {
-+        const groupWid = window.require('WAWebWidFactory').createWid(groupId);
-+        const group = await window
-+            .require('WAWebCollections')
-+            .Chat.find(groupWid);
-+        const toApprove = action === 'Approve';
-+        let membershipRequests;
-+        let response;
-+        let result = [];
-+
-+        await window
-+            .require('WAWebGroupQueryJob')
-+            .queryAndUpdateGroupMetadataById({ id: groupId });
-+
-+        if (!requesterIds?.length) {
-+            membershipRequests =
-+                group.groupMetadata.membershipApprovalRequests._models.map(
-+                    ({ id }) => id,
++        let wid;
++        const target = String(chatId);
++        if (target.includes('@')) {
++            wid = window.require('WAWebWidFactory').createWid(target);
++        } else {
++            const result = await window
++                .require('WAWebQueryExistsJob')
++                .queryPhoneExists('+' + target.replace(/\D/g, ''));
++            if (!result || !result.wid) {
++                throw new Error(
++                    'The provided phone number is not registered on WhatsApp',
 +                );
-+        } else {
-+            !Array.isArray(requesterIds) && (requesterIds = [requesterIds]);
-+            membershipRequests = requesterIds.map((r) =>
-+                window.require('WAWebWidFactory').createWid(r),
-+            );
++            }
++            wid = result.wid;
 +        }
 +
-+        if (!membershipRequests.length) return [];
-+
-+        const participantArgs = membershipRequests.map((m) => ({
-+            participantArgs: [
-+                {
-+                    participantJid: window
-+                        .require('WAWebWidToJid')
-+                        .widToUserJid(m),
-+                },
-+            ],
-+        }));
-+
-+        const groupJid = window
-+            .require('WAWebWidToJid')
-+            .widToGroupJid(groupWid);
-+
-+        const _getSleepTime = (sleep) => {
-+            if (
-+                !Array.isArray(sleep) ||
-+                (sleep.length === 2 && sleep[0] === sleep[1])
-+            ) {
-+                return sleep;
-+            }
-+            if (sleep.length === 1) {
-+                return sleep[0];
-+            }
-+            sleep[1] - sleep[0] < 100 &&
-+                (sleep[0] = sleep[1]) &&
-+                (sleep[1] += 100);
-+            return (
-+                Math.floor(Math.random() * (sleep[1] - sleep[0] + 1)) + sleep[0]
++        // Calls not flagged as a user gesture are treated as deep links and
++        // wait on a confirmation popup before the offer is sent.
++        const { CALL_FROM_UI } = window.require('WAWebWamEnumCallFromUi');
++        const { LOBBY_ENTRY_POINT_TYPE } = window.require(
++            'WAWebWamEnumLobbyEntryPointType',
++        );
++        await window
++            .require('WAWebVoipStartCall')
++            .startWAWebVoipCall(
++                wid,
++                isVideo,
++                CALL_FROM_UI.CONVERSATION,
++                LOBBY_ENTRY_POINT_TYPE.NOT_OPENED,
++                null,
++                { entryTrust: 'user_gesture' },
 +            );
-+        };
 +
-+        const membReqResCodes = {
-+            default: `An unknown error occupied while ${toApprove ? 'approving' : 'rejecting'} the participant membership request`,
-+            400: 'ParticipantNotFoundError',
-+            401: 'ParticipantNotAuthorizedError',
-+            403: 'ParticipantForbiddenError',
-+            404: 'ParticipantRequestNotFoundError',
-+            408: 'ParticipantTemporarilyBlockedError',
-+            409: 'ParticipantConflictError',
-+            412: 'ParticipantParentLinkedGroupsResourceConstraintError',
-+            500: 'ParticipantResourceConstraintError',
-+        };
++        // The call is registered in the collection shortly after the offer is
++        // sent, so wait for the newly placed call to become available before
++        // returning its data.
++        const collection = window.require('WAWebCallCollection');
++        let call = null;
++        for (let i = 0; i < 30 && !call; i++) {
++            await new Promise((resolve) => setTimeout(resolve, 100));
++            call = window.WWebJS.getOngoingCall();
++        }
 +
-+        try {
-+            for (const participant of participantArgs) {
-+                response = await window
-+                    .require('WASmaxGroupsMembershipRequestsActionRPC')
-+                    .sendMembershipRequestsActionRPC({
-+                        iqTo: groupJid,
-+                        [toApprove ? 'approveArgs' : 'rejectArgs']: participant,
-+                    });
-+
++        // Optionally block until the callee answers (or the timeout elapses).
++        if (call && waitForAnswer) {
++            const deadline = Date.now() + timeout;
++            while (Date.now() < deadline) {
++                const current = window.WWebJS.getOngoingCall();
 +                if (
-+                    response.name === 'MembershipRequestsActionResponseSuccess'
++                    collection.isInConnectedCall &&
++                    current &&
++                    current.id === call.id
 +                ) {
-+                    const value = toApprove
-+                        ? response.value.membershipRequestsActionApprove
-+                        : response.value.membershipRequestsActionReject;
-+                    if (value?.participant) {
-+                        const [_] = value.participant.map((p) => {
-+                            const error = toApprove
-+                                ? value.participant[0]
-+                                      .membershipRequestsActionAcceptParticipantMixins
-+                                      ?.value.error
-+                                : value.participant[0]
-+                                      .membershipRequestsActionRejectParticipantMixins
-+                                      ?.value.error;
-+                            return {
-+                                requesterId: window
-+                                    .require('WAWebWidFactory')
-+                                    .createWid(p.jid)._serialized,
-+                                ...(error
-+                                    ? {
-+                                          error: +error,
-+                                          message:
-+                                              membReqResCodes[error] ||
-+                                              membReqResCodes.default,
-+                                      }
-+                                    : {
-+                                          message: `${toApprove ? 'Approved' : 'Rejected'} successfully`,
-+                                      }),
-+                            };
-+                        });
-+                        _ && result.push(_);
-+                    }
-+                } else {
-+                    result.push({
-+                        requesterId: window
-+                            .require('WAWebJidToWid')
-+                            .userJidToUserWid(
-+                                participant.participantArgs[0].participantJid,
-+                            )._serialized,
-+                        message: 'ServerStatusCodeError',
-+                    });
++                    break;
 +                }
-+
-+                sleep &&
-+                    participantArgs.length > 1 &&
-+                    participantArgs.indexOf(participant) !==
-+                        participantArgs.length - 1 &&
-+                    (await new Promise((resolve) =>
-+                        setTimeout(resolve, _getSleepTime(sleep)),
-+                    ));
++                await new Promise((resolve) => setTimeout(resolve, 200));
 +            }
-+            return result;
-+        } catch (ignoredError) {
-+            return [];
 +        }
++
++        return call
++            ? {
++                  id: call.id,
++                  peerJid: call.peerJid?._serialized,
++                  isVideo: call.isVideo,
++                  isGroup: call.isGroup,
++                  outgoing: call.outgoing,
++              }
++            : null;
 +    };
 +
-+    window.WWebJS.subscribeToUnsubscribeFromChannel = async (
-+        channelId,
-+        action,
-+        options = {},
-+    ) => {
-+        const channel = await window.WWebJS.getChat(channelId, {
-+            getAsModel: false,
-+        });
++    window.WWebJS.isCallConnected = (callId) => {
++        const collection = window.require('WAWebCallCollection');
++        return (
++            collection.isInConnectedCall === true &&
++            !!collection.lastActiveCall &&
++            collection.lastActiveCall.id === callId
++        );
++    };
 +
-+        if (!channel || channel.newsletterMetadata.membershipType === 'owner')
-+            return false;
-+        options = {
-+            eventSurface: 3,
-+            deleteLocalModels: options.deleteLocalModels ?? true,
++    window.WWebJS.getActiveCall = () => {
++        const call = window.WWebJS.getOngoingCall();
++        if (!call) {
++            return null;
++        }
++        return {
++            id: call.id,
++            peerJid: call.peerJid?._serialized,
++            offerTime: call.offerTime,
++            isVideo: call.isVideo,
++            isGroup: call.isGroup,
++            outgoing: call.outgoing,
 +        };
-+
-+        try {
-+            if (action === 'Subscribe') {
-+                await window
-+                    .require('WAWebNewsletterSubscribeAction')
-+                    .subscribeToNewsletterAction(channel, options);
-+            } else if (action === 'Unsubscribe') {
-+                await window
-+                    .require('WAWebNewsletterUnsubscribeAction')
-+                    .unsubscribeFromNewsletterAction(channel, options);
-+            } else return false;
-+            return true;
-+        } catch (err) {
-+            if (err.name === 'ServerStatusCodeError') return false;
-+            throw err;
-+        }
 +    };
 +
-+    window.WWebJS.pinUnpinMsgAction = async (msgId, action, duration) => {
-+        const message =
-+            window.require('WAWebCollections').Msg.get(msgId) ||
-+            (
-+                await window
-+                    .require('WAWebCollections')
-+                    .Msg.getMessagesById([msgId])
-+            )?.messages?.[0];
-+        if (!message) return false;
-+
-+        if (typeof duration !== 'number') return false;
-+
-+        const originalFunction = window.require(
-+            'WAWebPinMsgConstants',
-+        ).getPinExpiryDuration;
-+        window.require('WAWebPinMsgConstants').getPinExpiryDuration = () =>
-+            duration;
-+
-+        const response = await window
-+            .require('WAWebSendPinMessageAction')
-+            .sendPinInChatMsg(message, action, duration);
-+
-+        window.require('WAWebPinMsgConstants').getPinExpiryDuration =
-+            originalFunction;
-+
-+        return response.messageSendResult === 'OK';
-+    };
-+
-+    window.WWebJS.getStatusModel = (status) => {
-+        const res = status.serialize();
-+        delete res._msgs;
-+        return res;
-+    };
-+
-+    window.WWebJS.getAllStatuses = () => {
-+        const statuses = window
-+            .require('WAWebCollections')
-+            .Status.getModelsArray();
-+        return statuses.map((status) => window.WWebJS.getStatusModel(status));
-+    };
-+
-+    window.WWebJS.enforceLidAndPnRetrieval = async (userId) => {
-+        const wid = window.require('WAWebWidFactory').createWid(userId);
-+        const isLid = wid.server === 'lid';
-+
-+        let lid = isLid
-+            ? wid
-+            : window.require('WAWebApiContact').getCurrentLid(wid);
-+        let phone = isLid
-+            ? window.require('WAWebApiContact').getPhoneNumber(wid)
-+            : wid;
-+
-+        if (!isLid && !lid) {
-+            const queryResult = await window
-+                .require('WAWebQueryExistsJob')
-+                .queryWidExists(wid);
-+            if (!queryResult?.wid) return {};
-+            lid = window.require('WAWebApiContact').getCurrentLid(wid);
-+        }
-+
-+        if (isLid && !phone) {
-+            const queryResult = await window
-+                .require('WAWebQueryExistsJob')
-+                .queryWidExists(wid);
-+            if (!queryResult?.wid) return {};
-+            phone = window.require('WAWebApiContact').getPhoneNumber(wid);
-+        }
-+
-+        return { lid, phone };
-+    };
-+
-+    window.WWebJS.assertColor = (hex) => {
-+        let color;
-+        if (typeof hex === 'number') {
-+            color = hex > 0 ? hex : 0xffffffff + parseInt(hex) + 1;
-+        } else if (typeof hex === 'string') {
-+            let number = hex.trim().replace('#', '');
-+            if (number.length <= 6) {
-+                number = 'FF' + number.padStart(6, '0');
-+            }
-+            color = parseInt(number, 16);
-+        } else {
-+            throw 'Invalid hex color';
-+        }
-+        return color;
-+    };
-+};
+     window.WWebJS.cropAndResizeImage = async (media, options = {}) => {
+         if (!media.mimetype.includes('image'))
+             throw new Error('Media is not an image');
