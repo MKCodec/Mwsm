@@ -23,6 +23,7 @@ on:
       - "version.json"
       - "mwsm.py"
       - "Dockerfile"
+      - "patches/**"
   release:
     types: [published, edited]
   workflow_dispatch:
@@ -62,7 +63,7 @@ jobs:
 
           echo "$CHANGED_FILES"
 
-          # Detectar alterações no DB e no Dockerfile
+          # Detectar alterações no DB, Dockerfile e Patches
           if echo "$CHANGED_FILES" | grep -q "mwsm.db"; then
             echo "DB_CHANGED=true" >> "$GITHUB_OUTPUT"
           else
@@ -73,6 +74,12 @@ jobs:
             echo "DOCKERFILE_CHANGED=true" >> "$GITHUB_OUTPUT"
           else
             echo "DOCKERFILE_CHANGED=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q "patches/"; then
+            echo "PATCH_CHANGED=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PATCH_CHANGED=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 🔢 Atualizar version.json e package.json (sincroniza com último release e calcula incremento)
@@ -106,6 +113,7 @@ jobs:
 
           echo "🔍 Base de versão: ${MAJ}.${MIN}.${PAT}"
 
+          # Incrementa versão base se o banco mudar
           if [ "${{ steps.detect.outputs.DB_CHANGED }}" = "true" ]; then
             echo "🔼 mwsm.db mudou — incrementando versão."
             if [ "$PAT" -lt 99 ]; then
@@ -123,6 +131,7 @@ jobs:
 
           NEW_VER="${MAJ}.${MIN}.${PAT}"
 
+          # Atualiza a versão e o timestamp de patch no version.json
           jq --arg v "$NEW_VER" --arg d "$PATCH" \
             '.version[0].release=$v | .version[0].patch=$d' version.json > version.tmp && mv version.tmp version.json
 
@@ -151,7 +160,7 @@ jobs:
           git config --global user.name "Bot-Mwsm 🤖"
           git config --global user.email "143403919+MKCodec@users.noreply.github.com"
           git config --global commit.gpgsign false
-          git add README.md package.json version.json || true
+          git add README.md package.json version.json patches/** || true
 
           if git diff --cached --quiet; then
             echo "✅ Nenhuma alteração detectada — nada a commitar."
@@ -212,7 +221,7 @@ jobs:
           npm publish --access public
 
       - name: 🐋 Build & Push Docker Image
-        if: steps.detect.outputs.DB_CHANGED == 'true' || steps.detect.outputs.DOCKERFILE_CHANGED == 'true'
+        if: steps.detect.outputs.DB_CHANGED == 'true' || steps.detect.outputs.DOCKERFILE_CHANGED == 'true' || steps.detect.outputs.PATCH_CHANGED == 'true'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
