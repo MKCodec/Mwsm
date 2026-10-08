@@ -244,34 +244,16 @@ const RemoveExistingJob = async (jobId) => {
 };
 
 app.post('/webhook/mkauth', async (req, res) => {
-	try {
-		const timestamp = new Date().toLocaleString('pt-BR', {
-			timeZone: 'America/Sao_Paulo'
-		});
-		const logContent = `
-==================================================
-DATA/HORA: ${timestamp}
-HEADERS: ${JSON.stringify(req.headers, null, 2)}
-QUERY PARAMS: ${JSON.stringify(req.query, null, 2)}
-BODY RAW/PARSED: ${JSON.stringify(req.body, null, 2)}
-\n`;
-
-		await fs.promises.appendFile('./webhook.txt', logContent, 'utf-8');
-	} catch (fsError) {
-		const timestamp = new Date().toISOString();
-		const errorLog = `
-==================================================
-DATA/HORA: ${timestamp}
-MENSAGEM: ${fsError.message}
-STACK: ${fsError.stack}
-\n`;
-
-		await fs.promises.appendFile('./webhook.txt', errorLog, 'utf-8');
-	}
+	writeLog('WEBHOOK RECEBIDO', {
+		headers: req.headers,
+		query: req.query,
+		body: req.body
+	});
 
 	try {
 		const isWebhookEnabled = Boolean(Debug('MKAUTH').whstatus);
 		if (!isWebhookEnabled) {
+			writeLog('WEBHOOK IGNORADO: Webhook desativado nas configurações.');
 			return res.status(200).json({
 				status: 'ignored',
 				message: 'Webhook is disabled.'
@@ -281,6 +263,7 @@ STACK: ${fsError.stack}
 		const signature = req.headers['x-webhook-signature'];
 
 		if (!signature) {
+			writeLog('WEBHOOK ERRO: Assinatura ausente.');
 			return res.status(401).json({
 				error: 'Missing webhook signature'
 			});
@@ -294,12 +277,14 @@ STACK: ${fsError.stack}
 			.digest('hex');
 
 		if (signature !== computedSignature) {
+			writeLog('WEBHOOK ERRO: Assinatura inválida.');
 			return res.status(401).json({
 				error: 'Invalid webhook signature'
 			});
 		}
 
 		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot) || !Boolean(Debug('SCHEDULER').onpay)) {
+			writeLog('WEBHOOK IGNORADO: Validações do sistema desativadas.');
 			return res.status(200).json({
 				status: 'ignored',
 				message: 'Validations disabled.'
@@ -336,6 +321,7 @@ STACK: ${fsError.stack}
 		}
 
 		if (numeroTitulo) {
+			writeLog(`WEBHOOK PROCESSANDO TÍTULO: ${numeroTitulo}`);
 			const Resolve = await MkAuth('all', numeroTitulo, 'list');
 			const isBank = Array.isArray(Resolve) ? Resolve[0] : (Resolve ? Object.assign({}, Resolve)[0] : null);
 
@@ -374,6 +360,7 @@ STACK: ${fsError.stack}
 							status: 'paid'
 						});
 					}
+					writeLog(`WEBHOOK SUCESSO: Título ${isBank.Identifier} processado e removido do SQLite.`);
 				}
 			}
 		}
@@ -382,19 +369,10 @@ STACK: ${fsError.stack}
 			status: 'success'
 		});
 	} catch (error) {
-		try {
-			const timestamp = new Date().toISOString();
-			const errorLog = `
-==================== ERRO PROCESSAMENTO ====================
-DATA/HORA: ${timestamp}
-MENSAGEM: ${error.message}
-STACK: ${error.stack}
-\n`;
-
-			await fs.promises.appendFile('./webhook.txt', errorLog, 'utf-8');
-		} catch (e) {
-
-		}
+		writeLog('WEBHOOK ERRO CRÍTICO NO PROCESSAMENTO', {
+			message: error.message,
+			stack: error.stack
+		});
 
 		return res.status(500).json({
 			error: 'Internal Server Error'
@@ -685,27 +663,34 @@ const isEmoji = (Value) => {
 };
 
 
-// Boolean Validation
 const Boolean = function(str) {
 	if (str == null || str === "") {
-		return undefined;
+		return false;
 	}
 
 	if (typeof str === 'boolean') {
 		return str;
 	}
 
-	if (typeof str === 'string') {
-		const trimmed = str.trim().toLowerCase();
-		if (['true', 'yes', '1'].includes(trimmed)) return true;
-		if (['false', 'not', '0', 'no'].includes(trimmed)) return false;
-		return undefined;
-	}
-
 	if (typeof str === 'number') {
 		return str !== 0;
 	}
 
+	if (typeof str === 'string') {
+		const normalized = str
+			.trim()
+			.toLowerCase()
+			.normalize("NFD")
+			.replace(/[\u0300-\u036f]/g, "");
+
+		if (/^(true|yes|y|sim|s|1|active|ativado|ativo|enabled|enable|on|ok|allow|allowed)$/.test(normalized)) {
+			return true;
+		}
+
+		if (/^(false|no|not|n|nao|0|inactive|inativo|disabled|disable|off|deny|denied|null|undefined)$/.test(normalized)) {
+			return false;
+		}
+	}
 	if (!isNaN(str)) {
 		return parseFloat(str) !== 0;
 	}
@@ -1005,9 +990,11 @@ const checkRedisSentToday = async (code) => {
 };
 
 const SetSchedule = async (ShedForce = false) => {
+
 	if (Boolean(Debug('ENGINE', 'ACTIVE', 'DIRECT', Debug('OPTIONS').engine)?.active)) {
 		await SyncEngineModules();
 	}
+
 	const mkConfig = Debug('MKAUTH');
 	const schedulerConfig = Debug('SCHEDULER');
 
@@ -1027,6 +1014,7 @@ const SetSchedule = async (ShedForce = false) => {
 			"Option": undefined
 		});
 	}
+
 	if (Boolean(schedulerConfig?.inday)) {
 		hasDays.push({
 			"Mode": "Now",
@@ -1037,6 +1025,7 @@ const SetSchedule = async (ShedForce = false) => {
 
 	[5, 10, 15, 20, 25, 30, 35, 40].forEach((speedVal) => {
 		const speedKey = ['lfive', 'lten', 'lfifteen', 'ltwenty', 'ltwentyfive', 'lthirty', 'lthirtyfive', 'lforty'][([5, 10, 15, 20, 25, 30, 35, 40].indexOf(speedVal))];
+
 		if (Boolean(schedulerConfig?.[speedKey]) || schedulerConfig?.speed == speedVal) {
 			hasDays.push({
 				"Mode": "Later",
@@ -1059,6 +1048,7 @@ const SetSchedule = async (ShedForce = false) => {
 	}
 
 	await (hasDays).someAsync(async (Days) => {
+
 		const today = new Date();
 		let targetDate = new Date(today);
 
@@ -1073,108 +1063,149 @@ const SetSchedule = async (ShedForce = false) => {
 		const Windows = await MkAuth(targetMonth, "all", 'list');
 		const Master = await Scheduller(Days.Set, Days.Mode);
 
-		if (Master && Array.isArray(Master) && Master.length > 0) {
-			Master.sort((a, b) => new Date(a.datavenc || a.Reward) - new Date(b.datavenc || b.Reward));
+		if (Array.isArray(Master) && Master.length > 0) {
+
+			Master.sort((a, b) => new Date(a.Reward) - new Date(b.Reward));
 
 			await (Master).someAsync(async (Send) => {
+
 				let MsgSET = false;
 
-				const titulo = Send.titulo || Send.Identifier;
-				const login = Send.login || Send.Connect;
-				const celular = Send.celular ? String(Send.celular).replace(/[^0-9\\.]+/g, '') : (Send.Contact ? String(Send.Contact).replace(/[^0-9\\.]+/g, '') : "00000000000");
-				const nomeAutoridade = Send.Authority || Send.nome || Send.Client || Send.nome_res || "Cliente";
-				const nomeCliente = Send.Client || Send.nome_res || Send.nome || Send.Authority || "Cliente";
-				const datavenc = Send.datavenc || Send.Reward;
-				let status = Send.status || Send.Payment;
-
-				const cliAtivadoRaw = Send.cli_ativado !== undefined ? Send.cli_ativado : Send.Working;
-				const zapRaw = Send.zap !== undefined ? Send.zap : Send.Ready;
+				const Identifier = Send.Identifier;
+				const Connect = Send.Connect;
+				const Contact = Send.Contact;
+				const Authority = Send.Authority;
+				const Client = Send.Client;
+				const Reward = Send.Reward;
+				let Payment = Send.Payment;
 
 				let WhatsApp = true;
+
 				if (Boolean(Debug('OPTIONS')?.regex)) {
-					WhatsApp = validPhone(celular);
+					WhatsApp = validPhone(Contact);
 				}
 
-				const statusMap = {
-					'aberto': 'open',
-					'pago': 'paid',
-					'vencido': 'due',
-					'cancelado': 'cancel'
-				};
-				if (statusMap[status]) status = statusMap[status];
+				const UnLock = Send.unLock ? 'true' : 'false';
 
-				const isCliAtivo = cliAtivadoRaw === 's' || cliAtivadoRaw === 'sim' || cliAtivadoRaw === 'true' || cliAtivadoRaw === true;
-				const isZapAtivo = zapRaw === 'sim' || zapRaw === 's' || zapRaw === 'true' || zapRaw === true;
-
-				if (datavenc && ((datavenc).split(" ")[0]) == (DateTime()).split(" ")[0] && status != 'paid' && status != 'cancel') {
-					status = 'open';
+				if (
+					Reward &&
+					(Reward.split(" ")[0]) == (DateTime()).split(" ")[0] &&
+					Payment !== 'paid' &&
+					Payment !== 'cancel'
+				) {
+					Payment = 'open';
 				}
 
-				const podeAgendar = isCliAtivo && status !== 'paid' && status !== 'cancel' && WhatsApp && isZapAtivo;
+				const podeAgendar =
+					Send.Working &&
+					Payment !== 'paid' &&
+					Payment !== 'cancel' &&
+					WhatsApp &&
+					Send.Ready;
 
 				if (podeAgendar) {
+
 					Index++;
-					const Replies = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(titulo);
+
+					const Replies = await link
+						.prepare('SELECT * FROM scheduling WHERE title=?')
+						.get(Identifier);
 
 					if (!Boolean(ShedForce)) {
 						isSHED.push({
-							"TITLE": titulo,
-							"CLIENT": nomeCliente,
-							"REWARD": datavenc
+							"TITLE": Identifier,
+							"CLIENT": Authority,
+							"REWARD": Reward
 						});
 					}
 
 					if (Replies == undefined) {
+
 						const ShedInsert = await link.prepare(
 							"INSERT INTO scheduling(title, user, authority, client, contact, reward, status, range, control, option, unlock, process) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 						).run(
-							titulo,
-							login,
-							nomeAutoridade,
-							nomeCliente,
-							celular,
-							datavenc,
-							status,
+							Identifier,
+							Connect,
+							Authority,
+							Client,
+							Contact,
+							Reward,
+							Payment,
 							Days.Mode,
 							Days.Set,
 							Days.Option,
-							isCliAtivo ? 's' : 'n',
+							UnLock,
 							'wait'
 						);
 
 						if (ShedInsert) {
 							MsgSET = true;
+
 							hasReady.push({
-								"ID": login
+								"ID": Connect
 							});
 						}
+
 					} else {
+
 						if (Replies.process === 'load') {
-							const enviadoHojeNoRedis = await checkRedisSentToday(titulo);
+
+							const enviadoHojeNoRedis = await checkRedisSentToday(Identifier);
 
 							if (!enviadoHojeNoRedis) {
+
 								const ShedUpdate = await link.prepare(
 									'UPDATE scheduling SET process=?, contact=?, option=?, control=?, range=?, status=?, unlock=?, client=?, authority=? WHERE title=?'
-								).run("wait", celular, Days.Option, Days.Set, Days.Mode, status, isCliAtivo ? 's' : 'n', nomeCliente, nomeAutoridade, titulo);
+								).run(
+									"wait",
+									Contact,
+									Days.Option,
+									Days.Set,
+									Days.Mode,
+									Payment,
+									UnLock,
+									Client,
+									Authority,
+									Identifier
+								);
 
 								if (ShedUpdate) {
 									MsgSET = true;
+
 									hasReady.push({
-										"ID": login
+										"ID": Connect
 									});
 								}
 							}
+
 						} else if (Replies.process !== 'success') {
-							const exUpdate = await link.prepare('SELECT * FROM scheduling WHERE title=? AND process=?').get(titulo, "wait");
+
+							const exUpdate = await link
+								.prepare('SELECT * FROM scheduling WHERE title=? AND process=?')
+								.get(Identifier, "wait");
+
 							if (exUpdate == undefined || Days.Option != exUpdate.option) {
+
 								const ShedUpdate = await link.prepare(
 									'UPDATE scheduling SET process=?, contact=?, option=?, control=?, range=?, status=?, unlock=?, client=?, authority=? WHERE title=?'
-								).run("wait", celular, Days.Option, Days.Set, Days.Mode, status, isCliAtivo ? 's' : 'n', nomeCliente, nomeAutoridade, titulo);
+								).run(
+									"wait",
+									Contact,
+									Days.Option,
+									Days.Set,
+									Days.Mode,
+									Payment,
+									UnLock,
+									Client,
+									Authority,
+									Identifier
+								);
 
 								if (ShedUpdate) {
 									MsgSET = true;
+
 									hasReady.push({
-										"ID": login
+										"ID": Connect
 									});
 								}
 							}
@@ -1190,11 +1221,13 @@ const SetSchedule = async (ShedForce = false) => {
 		}
 
 		if (Windows && Array.isArray(Windows)) {
+
 			await (Windows).someAsync(async (Bank) => {
-				const paymentStatus = Bank.Payment || Bank.status;
-				const titleId = Bank.Identifier || Bank.titulo;
-				if (paymentStatus === "paid" || paymentStatus === "pago") {
-					await link.prepare('DELETE FROM scheduling WHERE title=?').run(titleId);
+				if (Bank.Payment === "paid") {
+
+					const delRes = await link
+						.prepare('DELETE FROM scheduling WHERE title=?')
+						.run(Bank.Identifier);
 				}
 			});
 		}
@@ -1206,6 +1239,7 @@ const SetSchedule = async (ShedForce = false) => {
 
 	return true;
 };
+
 
 const isAllowedTime = () => {
 	const nowString = DateTime();
@@ -1219,9 +1253,34 @@ const isAllowedTime = () => {
 	return isShift(currentHour);
 };
 
+
+
+const writeLog = (message, data = null) => {
+	try {
+		const logPath = path.join(__dirname, 'webhook.log');
+		const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+		let logContent = `[${timestamp}] ${message}`;
+
+		if (data !== null) {
+			if (typeof data === 'object') {
+				logContent += ` | DATA: ${JSON.stringify(data)}`;
+			} else {
+				logContent += ` | DATA: ${data}`;
+			}
+		}
+
+		fs.appendFileSync(logPath, logContent + '\n', 'utf8');
+	} catch (err) {
+		console.error('Erro ao escrever no arquivo de log:', err);
+	}
+};
+
 const GetSchedule = async () => {
 	try {
-		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot)) {
+		const moduleActive = Boolean(Debug('MKAUTH').module);
+		const aimbotActive = Boolean(Debug('MKAUTH').aimbot);
+
+		if (!moduleActive || !aimbotActive) {
 			return;
 		}
 
@@ -1237,30 +1296,55 @@ const GetSchedule = async () => {
 
 		if (DataBase && DataBase.length >= 1) {
 			for (const Target of DataBase) {
-				const Local = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(Target);
-				if (!Local) {
+				const RawLocal = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(Target);
+				if (!RawLocal) {
 					continue;
 				}
+
+				const Local = {
+					Identifier: RawLocal.title,
+					Connect: RawLocal.user,
+					Authority: RawLocal.authority,
+					Client: RawLocal.client,
+					Contact: RawLocal.contact,
+					Reward: RawLocal.reward,
+					Payment: RawLocal.status,
+					unLock: RawLocal.unlock === 'true' || RawLocal.unlock === true,
+					Gateway: RawLocal.gateway,
+					Cash: RawLocal.cash,
+					id: RawLocal.id,
+					process: RawLocal.process,
+					range: RawLocal.range,
+					control: RawLocal.control,
+					option: RawLocal.option
+				};
 
 				const Rebase = await MkAuth('all', Target, 'list');
 				mkAuthCache.set(Target, Rebase);
 
 				if (Rebase != undefined && Rebase.Status == undefined) {
 					const Bank = await Object.assign({}, Rebase)[0];
+
 					if (!Bank) {
 						continue;
 					}
 
-					const CheckVal = (Bank.unLock !== Local.unlock && Boolean(Bank.Ready)) ? 1 : 0;
-					const IsPaidVal = (Bank.Payment !== Local.status && Boolean(Bank.Ready)) ? 1 : 0;
+					const bankUnlockBool = Boolean(Bank.unLock);
+					const localUnlockBool = Boolean(Local.unLock);
+					const isBankReady = Boolean(Bank.Ready);
+
+					const CheckVal = (bankUnlockBool !== localUnlockBool && isBankReady) ? 1 : 0;
+					const IsPaidVal = (Bank.Payment !== Local.Payment && isBankReady) ? 1 : 0;
 
 					if (IsPaidVal >= 1 && Local.process !== "success" && Bank.Payment === "paid") {
+						const bankUnlockStr = bankUnlockBool ? 'true' : 'false';
+						
 						await link.prepare('UPDATE scheduling SET status=?, cash=?, gateway=?, unlock=? WHERE title=?')
-							.run(Bank.Payment, Bank.Cash, Bank.Gateway, Bank.unLock, Target);
+							.run(Bank.Payment, Bank.Cash, Bank.Gateway, bankUnlockStr, Target);
 					} else if (CheckVal >= 1 && Local.process !== "wait" && Local.process !== "success") {
-						if (Bank.unLock === 'false' && Local.process !== "unlock") {
+						if (!bankUnlockBool && Local.process !== "unlock") {
 							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Target);
-						} else if (Bank.unLock === 'true') {
+						} else if (bankUnlockBool) {
 							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('unlock', 'true', Target);
 						}
 					}
@@ -1271,10 +1355,11 @@ const GetSchedule = async () => {
 		}
 
 		const Search = await link.prepare('SELECT * FROM scheduling').all();
+
 		if (Search && Search.length > 0) {
 			isPaid = Search.filter(Send => Send.process !== "success" && Send.status === "paid").length;
-			isLock = Search.filter(Send => Send.process === "lock" && Send.unlock === "false" && Send.status === "due").length;
-			isUnLock = Search.filter(Send => Send.process === "unlock" && Send.unlock === "true" && Send.status === "due").length;
+			isLock = Search.filter(Send => Send.process === "lock" && !Boolean(Send.unlock) && Send.status === "due").length;
+			isUnLock = Search.filter(Send => Send.process === "unlock" && Boolean(Send.unlock) && Send.status === "due").length;
 			isDue = Search.filter(Send => Send.process === "wait" && Send.status !== "paid").length;
 		}
 
@@ -1284,6 +1369,10 @@ const GetSchedule = async () => {
 			"unLock": isUnLock,
 			"Due": isDue
 		};
+
+		const onPayConfig = Boolean(Debug('SCHEDULER').onpay);
+		const onLockConfig = Boolean(Debug('SCHEDULER').onlock);
+		const onUnlockConfig = Boolean(Debug('SCHEDULER').onunlock);
 
 		let isReturn = Object.assign({}, isLoad);
 		if (typeof isLoad === 'object') {
@@ -1297,144 +1386,228 @@ const GetSchedule = async () => {
 		}
 
 		if (DataBase && DataBase.length >= 1) {
-			if (Boolean(Debug('SCHEDULER').onpay) && isPaid >= 1) {
-				const Paid = await link.prepare('SELECT * FROM scheduling WHERE status=? AND NOT process=?').get('paid', 'success');
-				if (Paid != undefined) {
-					const Resolve = mkAuthCache.get(Paid.title) || await MkAuth('all', Paid.title, 'list');
+			if (onPayConfig && isPaid >= 1) {
+				const RawPaid = await link.prepare('SELECT * FROM scheduling WHERE status=? AND NOT process=?').get('paid', 'success');
+				
+				if (RawPaid != undefined) {
+					const Paid = {
+						Identifier: RawPaid.title,
+						Connect: RawPaid.user,
+						Authority: RawPaid.authority,
+						Client: RawPaid.client,
+						Contact: RawPaid.contact,
+						Reward: RawPaid.reward,
+						Payment: RawPaid.status,
+						unLock: RawPaid.unlock === 'true' || RawPaid.unlock === true,
+						Gateway: RawPaid.gateway,
+						Cash: RawPaid.cash,
+						id: RawPaid.id,
+						process: RawPaid.process,
+						range: RawPaid.range,
+						control: RawPaid.control,
+						option: RawPaid.option
+					};
+
+					const Resolve = mkAuthCache.get(Paid.Identifier) || await MkAuth('all', Paid.Identifier, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
+
 					if (Resolve != undefined) {
-						if (Paid.status === "paid" && Boolean(isBank.Ready)) {
+						if (Paid.Payment === "paid" && Boolean(isBank.Ready)) {
 							await ProcessMkAuthMessage({
-								user: Paid.user,
-								client: Paid.client,
-								authority: Paid.authority,
-								code: Paid.title,
+								user: Paid.Connect,
+								client: Paid.Client,
+								authority: Paid.Authority,
+								code: Paid.Identifier,
 								status: "pending",
-								contact: Paid.contact || "00000000000",
-								reward: Paid.reward,
+								contact: Paid.Contact || "00000000000",
+								reward: Paid.Reward,
 								push: '00/00/0000 00:00:00',
 								option: Paid.option,
-								unlock: Paid.unlock,
+								unlock: Paid.unLock,
 								process: Paid.process,
 								token: Debug('OPTIONS').token,
-								cash: Paid.cash,
-								gateway: Paid.gateway,
-								payment: Paid.status,
+								cash: Paid.Cash,
+								gateway: Paid.Gateway,
+								payment: Paid.Payment,
 								priority: 1
 							});
 						}
 						if (global.io) {
 							global.io.emit('schedresume', {
-								title: Paid.title,
+								title: Paid.Identifier,
 								status: 'paid'
 							});
 						}
-						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('success', isBank.unLock || 'true', Paid.title);
+						
+						const finalBankUnlock = Boolean(isBank.unLock) ? 'true' : 'false';
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('success', finalBankUnlock, Paid.Identifier);
 					}
 				}
-			} else if (Boolean(Debug('SCHEDULER').onlock) && isLock >= 1) {
-				const Lock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('lock', 'false');
-				if (Lock != undefined) {
-					const Resolve = mkAuthCache.get(Lock.title) || await MkAuth('all', Lock.title, 'list');
+			} else if (onLockConfig && isLock >= 1) {
+				const RawLock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('lock', 'false');
+				
+				if (RawLock != undefined) {
+					const Lock = {
+						Identifier: RawLock.title,
+						Connect: RawLock.user,
+						Authority: RawLock.authority,
+						Client: RawLock.client,
+						Contact: RawLock.contact,
+						Reward: RawLock.reward,
+						Payment: RawLock.status,
+						unLock: RawLock.unlock === 'true' || RawLock.unlock === true,
+						Gateway: RawLock.gateway,
+						Cash: RawLock.cash,
+						id: RawLock.id,
+						process: RawLock.process,
+						range: RawLock.range,
+						control: RawLock.control,
+						option: RawLock.option
+					};
+
+					const Resolve = mkAuthCache.get(Lock.Identifier) || await MkAuth('all', Lock.Identifier, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
+
 					if (Resolve != undefined) {
-						if (Lock.status !== "paid" && Boolean(isBank.Ready)) {
+						if (Lock.Payment !== "paid" && Boolean(isBank.Ready)) {
 							await ProcessMkAuthMessage({
-								user: Lock.user,
-								client: Lock.client,
-								authority: Lock.authority,
-								code: Lock.title,
+								user: Lock.Connect,
+								client: Lock.Client,
+								authority: Lock.Authority,
+								code: Lock.Identifier,
 								status: "pending",
-								contact: Lock.contact || "00000000000",
-								reward: Lock.reward,
+								contact: Lock.Contact || "00000000000",
+								reward: Lock.Reward,
 								push: '00/00/0000 00:00:00',
 								option: Lock.option,
-								unlock: Lock.unlock,
+								unlock: Lock.unLock,
 								process: Lock.process,
 								token: Debug('OPTIONS').token,
-								cash: Lock.cash,
-								gateway: Lock.gateway,
-								payment: Lock.status,
+								cash: Lock.Cash,
+								gateway: Lock.Gateway,
+								payment: Lock.Payment,
 								priority: 2
 							});
 						}
 						if (global.io) {
-							global.io.emit('schedresume', Lock.title);
+							global.io.emit('schedresume', Lock.Identifier);
 						}
-						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Lock.title);
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Lock.Identifier);
 					}
 				}
-			} else if (Boolean(Debug('SCHEDULER').onunlock) && isUnLock >= 1) {
-				const UnLock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('unlock', 'true');
-				if (UnLock != undefined) {
-					const Resolve = mkAuthCache.get(UnLock.title) || await MkAuth('all', UnLock.title, 'list');
+			} else if (onUnlockConfig && isUnLock >= 1) {
+				const RawUnLock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('unlock', 'true');
+				
+				if (RawUnLock != undefined) {
+					const UnLock = {
+						Identifier: RawUnLock.title,
+						Connect: RawUnLock.user,
+						Authority: RawUnLock.authority,
+						Client: RawUnLock.client,
+						Contact: RawUnLock.contact,
+						Reward: RawUnLock.reward,
+						Payment: RawUnLock.status,
+						unLock: RawUnLock.unlock === 'true' || RawUnLock.unlock === true,
+						Gateway: RawUnLock.gateway,
+						Cash: RawUnLock.cash,
+						id: RawUnLock.id,
+						process: RawUnLock.process,
+						range: RawUnLock.range,
+						control: RawUnLock.control,
+						option: RawUnLock.option
+					};
+
+					const Resolve = mkAuthCache.get(UnLock.Identifier) || await MkAuth('all', UnLock.Identifier, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
+
 					if (Resolve != undefined) {
-						if (UnLock.status !== "paid" && Boolean(isBank.Ready)) {
+						if (UnLock.Payment !== "paid" && Boolean(isBank.Ready)) {
 							await ProcessMkAuthMessage({
-								user: UnLock.user,
-								client: UnLock.client,
-								authority: UnLock.authority,
-								code: UnLock.title,
+								user: UnLock.Connect,
+								client: UnLock.Client,
+								authority: UnLock.Authority,
+								code: UnLock.Identifier,
 								status: "pending",
-								contact: UnLock.contact || "00000000000",
-								reward: UnLock.reward,
+								contact: UnLock.Contact || "00000000000",
+								reward: UnLock.Reward,
 								push: '00/00/0000 00:00:00',
 								option: UnLock.option,
-								unlock: UnLock.unlock,
+								unlock: UnLock.unLock,
 								process: UnLock.process,
 								token: Debug('OPTIONS').token,
-								cash: UnLock.cash,
-								gateway: UnLock.gateway,
-								payment: UnLock.status,
+								cash: UnLock.Cash,
+								gateway: UnLock.Gateway,
+								payment: UnLock.Payment,
 								priority: 3
 							});
 						}
 						if (global.io) {
-							global.io.emit('schedresume', UnLock.title);
+							global.io.emit('schedresume', UnLock.Identifier);
 						}
-						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('load', UnLock.unlock, UnLock.title);
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('load', String(UnLock.unLock), UnLock.Identifier);
 					}
 				}
 			} else if ((isWeek(DateTime(0))) && (isShift((DateTime(0).split(" ")[1]).split(":")[0])) || (validPhone(Playground) && Initialize)) {
-				const Due = await link.prepare('SELECT * FROM scheduling WHERE NOT status=? AND process=?').get('paid', 'wait');
-				if (Due != undefined) {
-					const Resolve = mkAuthCache.get(Due.title) || await MkAuth('all', Due.title, 'list');
+				const RawDue = await link.prepare('SELECT * FROM scheduling WHERE NOT status=? AND process=?').get('paid', 'wait');
+				
+				if (RawDue != undefined) {
+					const Due = {
+						Identifier: RawDue.title,
+						Connect: RawDue.user,
+						Authority: RawDue.authority,
+						Client: RawDue.client,
+						Contact: RawDue.contact,
+						Reward: RawDue.reward,
+						Payment: RawDue.status,
+						unLock: RawDue.unlock === 'true' || RawDue.unlock === true,
+						Gateway: RawDue.gateway,
+						Cash: RawDue.cash,
+						id: RawDue.id,
+						process: RawDue.process,
+						range: RawDue.range,
+						control: RawDue.control,
+						option: RawDue.option
+					};
+
+					const Resolve = mkAuthCache.get(Due.Identifier) || await MkAuth('all', Due.Identifier, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
+
 					if (Resolve != undefined) {
 						if (isDue >= 1) {
 							if (Due.process !== "load" && Boolean(isBank.Ready)) {
 								await ProcessMkAuthMessage({
-									user: Due.user,
-									client: Due.client,
-									authority: Due.authority,
-									code: Due.title,
-									status: Due.status,
-									contact: Due.contact || "00000000000",
-									reward: Due.reward,
+									user: Due.Connect,
+									client: Due.Client,
+									authority: Due.Authority,
+									code: Due.Identifier,
+									status: Due.Payment,
+									contact: Due.Contact || "00000000000",
+									reward: Due.Reward,
 									push: '00/00/0000 00:00:00',
 									option: Due.option,
 									unlock: undefined,
 									process: Due.process,
 									token: Debug('OPTIONS').token,
-									cash: Due.cash,
-									gateway: Due.gateway,
-									payment: Due.status,
+									cash: Due.Cash,
+									gateway: Due.Gateway,
+									payment: Due.Payment,
 									priority: 4
 								});
 								if (global.io) {
-									global.io.emit('schedresume', Due.title);
+									global.io.emit('schedresume', Due.Identifier);
 								}
-								if (isBank.unLock === 'false' && Boolean(Debug('SCHEDULER').onlock)) {
-									await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("lock", isBank.unLock, Due.title);
-								} else {
-									await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("load", isBank.unLock, Due.title);
-								}
+								
+								const targetLockState = Boolean(isBank.unLock) ? 'true' : 'false';
+								const nextProcess = !Boolean(isBank.unLock) && Boolean(Debug('SCHEDULER').onlock) ? "lock" : "load";
+
+								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run(nextProcess, targetLockState, Due.Identifier);
 							} else {
 								if (global.io) {
-									global.io.emit('schedresume', Due.title);
+									global.io.emit('schedresume', Due.Identifier);
 								}
-								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("load", isBank.unLock, Due.title);
+								
+								const targetLockState = Boolean(isBank.unLock) ? 'true' : 'false';
+								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("load", targetLockState, Due.Identifier);
 							}
 						} else {
 							if (global.io) {
@@ -1650,7 +1823,7 @@ const GetBoletosFiltrados = async (CPF) => {
 	};
 };
 
-const MkList = async (FIND, REFINE = "titulos") => {
+const MkList = async (FIND, REFINE = "titulos", FORMAT = false) => {
 	const mkConfig = Debug('MKAUTH');
 	if (!mkConfig) return false;
 
@@ -1680,26 +1853,80 @@ const MkList = async (FIND, REFINE = "titulos") => {
 		let data = syncResponse.data;
 
 		if (typeof data === "string") {
-			const trimmedData = data.trim();
-			const jsonString = trimmedData.endsWith('}') ? trimmedData : trimmedData.slice(0, -1);
-			data = JSON.parse(jsonString);
+			let trimmedData = data.trim();
+			
+			if (!trimmedData.endsWith('}') && !trimmedData.endsWith(']')) {
+				const lastCloseObj = trimmedData.lastIndexOf('}');
+				const lastCloseArr = trimmedData.lastIndexOf(']');
+				const validEnd = Math.max(lastCloseObj, lastCloseArr);
+				if (validEnd !== -1) {
+					trimmedData = trimmedData.substring(0, validEnd + 1);
+				}
+			}
+			
+			data = JSON.parse(trimmedData);
 		}
 
 		if (!data || data.mensagem !== undefined || data.error !== undefined) {
 			return false;
 		}
 
-		const keys = Object.keys(data);
-		if (keys.length === 0) return false;
-		if (keys.length <= 2) return data.titulos;
+		let rawList = [];
+		if (Array.isArray(data)) {
+			rawList = data;
+		} else if (data.titulos && Array.isArray(data.titulos)) {
+			rawList = data.titulos;
+		} else if (typeof data === 'object') {
+			const keys = Object.keys(data);
+			if (keys.length === 0) return false;
+			rawList = data.titulos ? (Array.isArray(data.titulos) ? data.titulos : [data.titulos]) : [data];
+		}
 
-		return data;
+		if (!rawList || rawList.length === 0) return false;
+
+		if (!FORMAT) {
+			const keys = Object.keys(data);
+			if (keys.length <= 2 && data.titulos) return data.titulos;
+			return data;
+		}
+
+		const statusMap = {
+			'aberto': 'open',
+			'pago': 'paid',
+			'vencido': 'due',
+			'cancelado': 'cancel'
+		};
+
+		const formattedList = rawList.map(item => {
+			const Phone = item.celular
+				? String(item.celular).replace(/\D/g, '')
+				: "00000000000";
+
+			const rawStatus = String(item.status || '').toLowerCase().trim();
+			const paymentStatus = statusMap[rawStatus] || rawStatus;
+
+			return {
+				Identifier: String(item.titulo || ''),
+				Connect: item.login || '',
+				Client: item.nome_res || '',
+				Authority: item.nome || '',
+				Reward: item.datavenc || '',
+				Payment: paymentStatus,
+				Contact: Phone,
+				Working: Boolean(item.cli_ativado),
+				unLock: !Boolean(item.bloqueado),
+				LowSpeed: item.dias_corte || '0',
+				Ready: Boolean(item.zap),
+				Cash: item.valor || '0.00'
+			};
+		});
+
+		return formattedList;
 
 	} catch (err) {
 		return false;
 	}
 };
-
 
 function isWeek(Sysdate) {
 	const weekDays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -1719,7 +1946,7 @@ const Scheduller = async (DAYS, MODE) => {
 	} else if (modeLower === "later") {
 		targetDate = DateTime(DAYS, "subtract").split(" ")[0];
 	}
-	return await MkList(targetDate);
+	return await MkList(targetDate, 'titulos', true);
 };
 
 
@@ -2245,7 +2472,6 @@ const MkAuth = async (UID, FIND, EXT = 'titulos', TYPE = 'titulo', MODE = true) 
 			vencido: 'due',
 			cancelado: 'cancel'
 		};
-		const boolTranslate = (val, trueVal = 'sim') => (val === trueVal ? 'true' : 'false');
 
 		if (targetExt === 'titulos') {
 			const cleanFind = String(targetFind).replace(/^0+/, '');
@@ -2420,10 +2646,10 @@ const MkAuth = async (UID, FIND, EXT = 'titulos', TYPE = 'titulo', MODE = true) 
 					"Payment": statusClean,
 					"Connect": Send.login,
 					"Contact": celularClean,
-					"Working": boolTranslate(Send.cli_ativado, 's'),
-					"unLock": boolTranslate(Send.bloqueado, 'nao'),
+					"Working": Boolean(Send.cli_ativado),
+					"unLock": !Boolean(Send.bloqueado),
 					"LowSpeed": Send.dias_corte,
-					"Ready": boolTranslate(Send.zap, 'sim'),
+					"Ready": Boolean(Send.zap),
 					"Cash": Send.valorpag,
 					"Gateway": formapagClean
 				});
