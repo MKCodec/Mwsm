@@ -1,7 +1,7 @@
 <html>
 
 <head>
-    <title>Mwsm v2.0</title>
+    <title>Mwsm v3.0</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="style.css" media="screen">
     <link rel="icon" type="image/x-icon" href="/icon.png">
@@ -10,9 +10,59 @@
     <script type="text/javascript" src="script.js"></script>
 </head>
 
+
+
+<div id="preload-overlay" style="position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; background-color: #111827 !important; z-index: 2147483647 !important; display: none; align-items: center !important; justify-content: center !important; flex-direction: column !important; color: #fff !important;">
+    <div style="text-align: center;">
+        <div class="spinner" style="width: 50px; height: 50px; border: 4px solid rgba(255, 255, 255, 0.1); border-top: 4px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 15px auto;"></div>
+        <h2 style="font-size: 16px; font-weight: 400; color: #9ca3af; margin: 0;">Loading Panel...</h2>
+    </div>
+</div>
+
+<!-- Container da API / Iframe Global -->
+<div class="API" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2147483639; display: none; background: #111827;"></div>
+
+
 <body>
     <div id="API">
         <div id="tabs" style="margin:10px;width:690px;height:326;">
+
+<div class="modal-send" style="width:85px;height:140px;background:#FFF;position:absolute;right:-87px;margin-top:100px;border-radius:0px 6px 5px 0px;border:1px solid #999;display:none;">
+                    <div style="margin-top:10px;">
+                        <div style="display: inline-block;">
+                            <div style="width:40px;margin-top:20px;margin-left:15px;">
+
+<li class="Glass">
+    <select class="form-control" id="isDay" style="width:50px;padding:5px;">
+        <option value="00" selected>00</option>
+    </select>
+</li>
+
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top:-5px;">
+                        <div style="display: inline-block;">
+                            <div style="width:60px;margin-top:15px;margin-left:15px;">
+
+
+
+<div class="input-group-prepend" style="padding:0px;">
+                                                        <button type="button" class="btn btn-primary" id="inSend" style="height:40px;width:50px;margin-right:5px;margin-top:0px;">
+                                                            <i class="fa fa-paper-plane-o fa-lg" aria-hidden="true"></i>
+                                                        </button>
+                                                    </div>
+
+
+
+
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+
             <ul>
                 <li>
                     <a href="#tabs-1">
@@ -38,7 +88,7 @@
                     </div>
                     <div style="float:left;">
                         <div class="wwjs">
-                            <span id="wwjs">
+                            <span id="wwjs" class="disabled-panel">
                                 <i class="fa fa-whatsapp" aria-hidden="true"></i>
                             </span>
                         </div>
@@ -601,18 +651,247 @@
                                             </div>
                                         </div>
 
+
+                                       <div style="float: right; width: 110px; padding: 0px; margin-left: 10px;">
+                                                <div class="col-15">
+
+                                                        <div class="input-group mb-3" style="height:40px;width:105px;">
+                                                            <div class="input-group-prepend">
+                                                                <span class="input-group-text" style="height:25px;">
+                                                                    <i class="fa fa-heartbeat" id="HeartBeat" aria-hidden="true"></i>
+                                                                </span>
+                                                            </div>
+                                                            <div class="quantity">
+                                                                <input type="number" id="Heartbeat" placeholder="1" style="width:55px;font-size:14px;" min="0" max="60" step="5" value="" readonly="" maxlength="2">
+                                                                <div class="quantity-nav">
+                                                                    <input type="button" class="quantity-button quantity-up" value="&#xf106;" id="HeartbeatUP">
+                                                                    <input type="button" class="quantity-button quantity-down" value="&#xf107" id="HeartbeatDown">
+                                                                </div>
+                                                            </div>
+                                                       
+                                                </div>
+                                            </div>
+                                        </div>
+
+
+
+
+
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <div id="tabs-2C" style="z-index: 1; display: none;" aria-labelledby="ui-id-3" role="tabpanel" class="ui-tabs-panel ui-corner-bottom ui-widget-content" aria-hidden="true">
-                            <div class="row">
-                                <div class="col-75">
-                                    <div class="row" style="padding:0px 10px;height:220px;"> under construction </div>
+                        <div id="tabs-2C" style="z-index: 1;" aria-labelledby="ui-id-3" role="tabpanel" class="ui-tabs-panel ui-corner-bottom ui-widget-content" aria-hidden="false">
+
+
+
+
+
+
+<div id="tabs-2C1" class="row" style="padding: 0px 10px; height: 220px;">
+    <div class="row">
+        <div class="col-75">
+            <form>
+                <div class="row" style="padding-top:-5px;">
+                    <div class="col-50">
+                        
+                        <div class="input-group mb-3" style="height:40px;width:540px;">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text" style="height:25px;width:17px;">
+                                    <i class="fa fa-key" aria-hidden="true"></i>
+                                </span>
+                            </div>
+                            <input type="text" id="asktoken" placeholder="TOKEN OPENROUTER" style="width:91%;">
+                        </div>
+
+                        <div class="row" style="margin-top:10px;">
+                            <div class="col-50">
+                                <div class="input-group mb-3" style="height:40px;width:534px;">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text" style="height:25px;width:17px;">
+                                            <i class="fa fa-android" aria-hidden="true"></i>
+                                        </span>
+                                    </div>
+                                    <select class="form-control" style="border-radius:0px;height:40px;" id="askai">
+<option value="00" selected="" hidden="">
+Artificial intelligence</option>
+                                    </select>
+
+                                    <div class="input-group-append" style="height:40px;border-radius:0px;">
+
+<select class="form-control" style="height:40px;width:120px;" id="askmode">
+                                            
+<option value="00" selected="" hidden="">
+Mode</option>
+<option value="0">Cloud</option>                      
+<option value="1">Brain</option>
+<option value="2">Hybrid</option>
+                                        </select>
+                                        <input type="text" id="askip" placeholder="SERVER" style="width:120px;height:40px;border-radius:0px;display:none;"> 
+                                        <input type="text" id="askport" placeholder="PORT" style="width:60px;height:40px;"> 
+
+                                        <select class="form-control" style="height:40px;width:60px;border-left:none;" id="askuf">
+<option value="00" selected="" hidden="">
+UF</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div id="tabs-2D" style="z-index: 1; display: none;" aria-labelledby="ui-id-4" role="tabpanel" class="ui-tabs-panel ui-corner-bottom ui-widget-content" aria-hidden="true">
+
+                        <div class="row" style="margin-top:10px;">
+                            <div class="col-50">
+                                <div class="input-group mb-3" style="height:40px;width:540px;">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text" style="height:25px;width:17px;">
+                                            <i class="fa fa-code" aria-hidden="true"></i>
+                                        </span>
+                                    </div>
+                                    <input type="text" id="askprompt" placeholder="PROMPT" style="width:91%;">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row" style="margin-top:10px;margin-left:10px;">
+                            <div style="float:right;width:600px;height:50px;">
+                                
+                                <div class="col-15" style="float:left;">
+                                    <label for="balance_access">Balance</label>
+                                    <input type="tel" id="balance_port" placeholder="8000" hidden="">
+                                    <div class="input-group mb-3" style="height:40px;width:135px;">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text" style="height:25px;">
+                                                <i class="fa fa-usd" aria-hidden="true"></i>
+                                            </span>
+                                        </div>
+                                        <input type="tel" id="askbalance" placeholder="0,00" style="width:90px;" maxlength="4" disabled>
+                                    </div>
+                                </div>
+
+                                <div class="col-15" style="float:left;">
+                                    <label for="input_access">Input</label>
+                                    <input type="tel" id="input_port" placeholder="8000" hidden="">
+                                    <div class="input-group mb-3" style="height:40px;width:120px;">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text" style="height:25px;">
+                                                <i class="fa fa-sign-in" aria-hidden="true"></i>
+                                            </span>
+                                        </div>
+                                        <input type="tel" id="askinput" placeholder="0,00" style="width:72px;" maxlength="4" disabled>
+                                    </div>
+                                </div>
+
+                                <div class="col-15" style="float:left;">
+                                    <label for="output_access">Output</label>
+                                    <input type="tel" id="output_port" placeholder="8000" hidden="">
+                                    <div class="input-group mb-3" style="height:40px;width:125px;">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text" style="height:25px;">
+                                                <i class="fa fa-sign-out" aria-hidden="true"></i>
+                                            </span>
+                                        </div>
+                                        <input type="tel" id="askoutput" placeholder="0,00" style="width:72px;" maxlength="4" disabled>
+                                    </div>
+                                </div>
+
+                                <div class="col-15" style="float:left;">
+                                    <label for="brain_access">Brain</label>
+                                    <input type="tel" id="brain_port" placeholder="0,00" hidden="">
+                                    <div class="input-group mb-3" style="height:40px;width:205px;">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text" style="height:25px;">
+                                                <i class="fa fa-th-large" aria-hidden="true"></i>
+                                            </span>
+                                        </div>
+                                        <input type="tel" id="askbrain" placeholder="0" style="width:65px;" maxlength="4" disabled>
+
+                                        <div class="input-group-prepend" style="padding:0px;">
+                                            <button type="button" class="btn btn-primary" id="AskTrash" style="height:40px;width:40px;margin-right:5px;margin-top:0px;border-radius:0px 5px 5px 0px;">
+                                                <i class="fa fa-trash-o fa-lg" aria-hidden="true"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        <div style="width:100%;height:35px;padding:0px;position:absolute;float:right;">
+                            <div style="width:100%;height:35px;padding:0px;margin-left:20px;">
+                                <div class="row" style="margin-top:-12px;padding-left:0px;z-index:9999999;float:right;width:150px;margin-right:12px;">
+                                    <label></label>
+                                    <div class="col-20" style="padding-left:12px;margin-top:-5px;">
+                                        <label class="switch switch-green">
+                                            <input type="checkbox" class="switch-input" id="askmodule">
+                                            <span class="switch-label" data-on="On" data-off="Off"></span>
+                                            <span class="switch-handle"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="col-75" style="height:160px;width:90px;position:absolute;right:25px;margin-top:15px;">
+                        <div class="row">
+
+                            <!-- Threshold: 0.0 at  1.0, passo de 0.05 (ou 0.5) -->
+                            <div class="col-75">
+                                <div class="row" style="margin-top:7px;margin-bottom:0px;padding-left:20px;z-index:9999999;">
+                                    <div class="col-15">
+                                        <label for="threshold_range">Threshold</label>
+                                        <div class="input-group mb-3" style="height:40px;width:120px;margin-top:-20px;">
+                                            <input type="range" id="threshold_range" name="threshold_range" min="0" max="1" step="0.05" value="0" oninput="this.form.threshold_input.value=this.value" style="width:80px;">
+                                            <input type="number" id="threshold_input" name="threshold_input" min="0" max="1" step="0.05" value="0" oninput="this.form.threshold_range.value=this.value" style="width:30px;border:none;padding:0px;color:#0f90dc;background:transparent;" disabled="">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Timeout: 0 at  30, passo de 1 em 1 -->
+                            <div class="col-75">
+                                <div class="row" style="margin-top:7px;margin-bottom:0px;padding-left:20px;z-index:9999999;">
+                                    <div class="col-15">
+                                        <label for="timeout_range">Timeout</label>
+                                        <div class="input-group mb-3" style="height:40px;width:120px;margin-top:-20px;">
+                                            <input type="range" id="timeout_range" name="timeout_range" min="0" max="30" step="1" value="0" oninput="this.form.timeout_input.value=this.value" style="width:80px;">
+                                            <input type="number" id="timeout_input" name="timeout_input" min="0" max="30" step="1" value="0" oninput="this.form.timeout_range.value=this.value" style="width:30px;border:none;padding:0px;color:#0f90dc;background:transparent;" disabled="">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Knowledge: 1 at  10, passo de 1 em 1 -->
+                            <div class="col-75">
+                                <div class="row" style="margin-top:7px;margin-bottom:0px;padding-left:20px;z-index:9999999;">
+                                    <div class="col-15">
+                                        <label for="knowledge_range">Knowledge</label>
+                                        <div class="input-group mb-3" style="height:40px;width:120px;margin-top:-20px;">
+                                            <input type="range" id="knowledge_range" name="knowledge_range" min="1" max="10" step="1" value="1" oninput="this.form.knowledge_input.value=this.value" style="width:80px;">
+                                            <input type="number" id="knowledge_input" name="knowledge_input" min="1" max="10" step="1" value="1" oninput="this.form.knowledge_range.value=this.value" style="width:30px;border:none;padding:0px;color:#0f90dc;background:transparent;" disabled="">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+
+
+
+                        </div>                        <div id="tabs-2D" style="z-index: 1; display: none;" aria-labelledby="ui-id-4" role="tabpanel" class="ui-tabs-panel ui-corner-bottom ui-widget-content" aria-hidden="true">
                             <div class="row">
                                 <div class="col-75">
                                     <div class="row" style="padding:0px 10px;height:220px;">
@@ -663,7 +942,12 @@
                                         <form>
                                             <div class="row" style="padding-top:-5px;">
                                                 <div class="col-50">
-                                                    <label for="Username"> API Connection</label>
+                                                    <div>
+                                                    <div style="float:left;"><label for="Username"> API Connection</label></div>
+                                                    <div style="float:right;margin-right:8px;">
+                                                    <button class="btn btn-primary" type="button" id="Webhook" style="margin-top:-7px;padding:3px 10px 5px 10px;height:26px;">WebHook</button>
+                                                    </div>
+                                                    </div>
                                                     <div class="input-group mb-3" style="height:40px;width:540px;">
                                                         <div class="input-group-prepend">
                                                             <span class="input-group-text" style="height:25px;width:17px;">
@@ -1155,7 +1439,7 @@
                             <a href="#tabs-2B" tabindex="-1" class="ui-tabs-anchor" id="ui-id-2">Extras</a>
                         </li>
                         <li role="tab" tabindex="-1" class="ui-tabs-tab ui-corner-top ui-state-default ui-tab" aria-controls="tabs-2C" aria-labelledby="ui-id-3" aria-selected="false" aria-expanded="false">
-                            <a href="#tabs-2C" tabindex="-1" class="ui-tabs-anchor" id="ui-id-3">Hotkeys</a>
+                            <a href="#tabs-2C" tabindex="-1" class="ui-tabs-anchor" id="ui-id-3">AI Mode</a>
                         </li>
                         <li role="tab" tabindex="-1" class="ui-tabs-tab ui-corner-top ui-state-default ui-tab" aria-controls="tabs-2D" aria-labelledby="ui-id-4" aria-selected="false" aria-expanded="false">
                             <a href="#tabs-2D" tabindex="-1" class="ui-tabs-anchor" id="ui-id-4">Run</a>
@@ -1320,8 +1604,8 @@
                                     <br>
                                     <b>SERVER :</b>
                                     <i class="host" id="SRVCode"></i>
-                                    <button class="btn btn-light Copy" style="padding:0px;margin-top:-3px;width:30px;height:12px;" type="button" id="ButtonSRV">
-                                        <i class="fa SRVCode fa-clone" style="margin-left: -10px;" aria-hidden="true"></i>
+                                    <button class="btn btn-light Copy" style="padding:0px;margin-top:-3px;width:30px;height:30px;padding:0px -5px 0px 5px;" type="button" id="ButtonSRV">
+                                        <i class="fa SRVCode fa-clone" aria-hidden="true"></i>
                                     </button>
                                     <br>
                                 </div>
@@ -1339,6 +1623,63 @@
                 <span class="close" style="margin-top:-10px;">&times;</span>
                 <h3></h3>
             </div>
+
+
+
+<div class="modal-body WebHook">
+
+
+
+                    
+
+<div style="margin-top:-5px;margin-right:-7px;">
+                        <div class="row" style="margin-top:10px;">
+                                                        <div class="col-50">
+                                                            <div class="input-group mb-3" style="height:40px;width:540x;">
+                                                                <div class="input-group-prepend">
+                                                                    <span class="input-group-text" style="height:25px;width:17px;">
+                                                                        <i class="fa fa-key" aria-hidden="true"></i>
+                                                                    </span>
+                                                                </div>
+                                                                <input type="text" id="WHToken" placeholder="SECRET" style="width:91%;">
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                    </div><div style="margin-top:-5px;margin-right:-7px;">
+    <div class="row" style="margin-top:10px;">
+        <div class="col-50">
+            <div class="input-group mb-3" style="height:40px; width:547px; margin-top:5px; position:relative;">
+                <div class="input-group-prepend">
+                    <span class="input-group-text" style="height:25px;width:17px;">
+                        <i class="fa fa-server" aria-hidden="true"></i>
+                    </span>
+                </div>
+                
+                <input type="text" id="WHServer" placeholder="SERVER" style="width:91%; padding-right:5px;" disabled="">
+                <button class="btn btn-light Copy" type="button" id="WHSCopy" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); width:30px; height:30px; padding:0; z-index:10;">
+                    <i class="fa WHSCode fa-clone" aria-hidden="true" style=""></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="col-75" style="margin-right:20px;">
+            <div class="row" style="margin-top:20px;margin-bottom:-10px;padding-left:20px;z-index:9999999;float:right;">
+                <div class="col-20">
+                    <label class="switch switch-green">
+                        <input type="checkbox" class="switch-input" id="WHook">
+                        <span class="switch-label" data-on="On" data-off="Off"></span>
+                        <span class="switch-handle"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+            </div>
+
+
             <div class="modal-body Agenda">
                 <div class="modal-menu" style="width:85px;height:190px;background:#FFF;position:absolute;right:-87px;margin-top:-15px;border-radius:0px 6px 5px 0px;border:1px solid #999;display:none;">
                     <div style="margin-top:10px;">

@@ -1,6 +1,7 @@
 {
   "name": "bot-mwsm",
   "version": "3.0.8",
+  "type": "module",
   "description": "Bot-Mwsm: based on Whatsapp API",
   "main": "mwsm.js",
   "scripts": {

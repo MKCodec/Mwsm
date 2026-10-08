@@ -3,6 +3,28 @@
 //******************************************************************
 const Playground = "00000000000";
 const Initialize = false;
+
+
+import {
+	createRequire
+} from 'module';
+import {
+	fileURLToPath
+} from 'url';
+import path from 'path';
+
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+import {
+	exec as execCb,
+	execSync
+} from 'child_process';
+import {
+	promisify
+} from 'util';
+
 const {
 	Client,
 	LocalAuth,
@@ -15,10 +37,12 @@ const {
 	body,
 	validationResult
 } = require('express-validator');
+
 var Delay, Wait, Reboot, Sending, Permission = false,
 	wwjsRun = true;
-MsgBox = false,
+var MsgBox = false,
 	Session = false;
+
 const activeSupportIA = new Map();
 const activeMenus = new Map();
 const socketIO = require('socket.io');
@@ -28,6 +52,7 @@ const https = require('https');
 const fileUpload = require('express-fileupload');
 const axios = require('axios');
 const mime = require('mime-types');
+
 const app = express();
 const os = require("os");
 const hostName = os.hostname();
@@ -35,18 +60,50 @@ const emoji = require('Emoji-API');
 const server = http.createServer(app);
 const io = socketIO(server);
 const sys = require('util');
-const fs = require("fs");
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 const ip = require('ip');
 const Url2PDF = require("Url2PDF");
 const cron = require('node-cron');
 const htmlPDF = new Url2PDF();
-const exec = require('child_process').exec;
-const {
-	execSync
-} = require("child_process");
+
+const exec = promisify(execCb);
+
+let isPanelAuthorized = false;
+
 const link = require('better-sqlite3')('mwsm.db');
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('mwsm.db');
+link.pragma('journal_mode = WAL');
+
+const db = {
+	run: (sql, params, callback) => {
+		try {
+			const info = link.prepare(sql).run(params || []);
+			if (typeof callback === 'function') callback(null, info);
+		} catch (err) {
+			if (typeof callback === 'function') callback(err);
+		}
+	},
+	get: (sql, params, callback) => {
+		try {
+			const row = link.prepare(sql).get(params || []);
+			if (typeof callback === 'function') callback(null, row);
+		} catch (err) {
+			if (typeof callback === 'function') callback(err);
+		}
+	},
+	all: (sql, params, callback) => {
+		try {
+			const rows = link.prepare(sql).all(params || []);
+			if (typeof callback === 'function') callback(null, rows);
+		} catch (err) {
+			if (typeof callback === 'function') callback(err);
+		}
+	},
+	serialize: (callback) => {
+		if (typeof callback === 'function') callback();
+	}
+};
+
 const register = new Date().getDate();
 const Package = require('./package.json');
 require('events').EventEmitter.defaultMaxListeners = Infinity;
@@ -54,8 +111,393 @@ const WServer = "https://raw.githubusercontent.com/MKCodec/Mwsm/main/version.jso
 const crypto = require('crypto');
 const Keygen = (length = 7, characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz') => Array.from(crypto.randomFillSync(new Uint32Array(length))).map((x) => characters[x % characters.length]).join('');
 var Password = [Debug('OPTIONS').token, Keygen()];
+
 process.env.LANG = "pt-BR.utf8";
 global.io = io;
+
+const {
+	Queue,
+	Worker,
+	QueueEvents,
+	DelayedError
+} = require('bullmq');
+const Redis = require('ioredis');
+
+const connection = new Redis({
+	host: '127.0.0.1',
+	port: 6379,
+	maxRetriesPerRequest: null,
+	retryStrategy(times) {
+		const delay = Math.min(times * 500, 5000);
+		return delay;
+	}
+});
+
+const messageQueue = new Queue('Row', {
+	connection,
+	skipVersionCheck: true
+});
+
+const queueEvents = new QueueEvents('Row', {
+	connection,
+	skipVersionCheck: true
+});
+
+// Configuração única do express.json com verify para capturar o rawBody corretamente
+app.use(express.json({
+	verify: (req, res, buf) => {
+		if (buf && buf.length) {
+			req.rawBody = buf.toString('utf8');
+		}
+	}
+}));
+app.use(express.urlencoded({
+	extended: true
+}));
+
+const EnqueueWithPriority = async (payload, delayMs = 0, isPostRoute = false) => {
+	const queueInstance = typeof messageQueue !== 'undefined' ? messageQueue : global.messageQueue;
+
+	if (!queueInstance) {
+		return false;
+	}
+
+	const RETENTION_30_DAYS = 30 * 24 * 3600;
+	const hoje = new Date().toISOString().split('T')[0];
+	const codigoTitulo = payload.code || payload.titulo || payload.codeTitle || `${Keygen(7)}`;
+
+	const rawPriority = Number(payload?.priority ?? 4);
+	const effectivePriority = isPostRoute ? 0 : rawPriority;
+	const jobIdPriority = (isPostRoute || rawPriority === 0) ? 4 : rawPriority;
+
+	const uniqueJobId = `msg-${codigoTitulo}-p${jobIdPriority}-${hoje}`;
+
+	const jobOptions = {
+		jobId: uniqueJobId,
+		priority: effectivePriority,
+		attempts: 3,
+		backoff: {
+			type: 'exponential',
+			delay: 5000
+		},
+		removeOnComplete: {
+			age: RETENTION_30_DAYS
+		},
+		removeOnFail: {
+			age: RETENTION_30_DAYS
+		}
+	};
+
+	if (delayMs > 0) {
+		jobOptions.delay = delayMs;
+	}
+
+	try {
+		const existingJob = await queueInstance.getJob(uniqueJobId);
+
+		if (existingJob) {
+			return null;
+		}
+
+		const resultJob = await queueInstance.add('send-message', {
+			...payload,
+			priority: effectivePriority
+		}, jobOptions);
+
+		return resultJob;
+
+	} catch (err) {
+		const isDuplicate = err.message && (
+			err.message.includes('Job') ||
+			err.message.includes('already exists') ||
+			err.message.includes('exists')
+		);
+
+		if (isDuplicate) {
+			return null;
+		}
+
+		throw err;
+	}
+};
+
+const RemoveExistingJob = async (jobId) => {
+	const queueInstance = typeof messageQueue !== 'undefined' ? messageQueue : global.messageQueue;
+
+	if (!queueInstance || !jobId) return false;
+
+	try {
+		const existingJob = await queueInstance.getJob(jobId);
+
+		if (existingJob) {
+			const state = await existingJob.getState();
+
+			if (['failed', 'delayed', 'waiting'].includes(state)) {
+				await existingJob.remove();
+				return true;
+			}
+		}
+		return false;
+	} catch (err) {
+		return false;
+	}
+};
+
+app.post('/webhook/mkauth', async (req, res) => {
+	try {
+		const timestamp = new Date().toLocaleString('pt-BR', {
+			timeZone: 'America/Sao_Paulo'
+		});
+		const logContent = `
+==================================================
+DATA/HORA: ${timestamp}
+HEADERS: ${JSON.stringify(req.headers, null, 2)}
+QUERY PARAMS: ${JSON.stringify(req.query, null, 2)}
+BODY RAW/PARSED: ${JSON.stringify(req.body, null, 2)}
+\n`;
+
+		await fs.promises.appendFile('./webhook.txt', logContent, 'utf-8');
+	} catch (fsError) {
+		const timestamp = new Date().toISOString();
+		const errorLog = `
+==================================================
+DATA/HORA: ${timestamp}
+MENSAGEM: ${fsError.message}
+STACK: ${fsError.stack}
+\n`;
+
+		await fs.promises.appendFile('./webhook.txt', errorLog, 'utf-8');
+	}
+
+	try {
+		const isWebhookEnabled = Boolean(Debug('MKAUTH').whstatus);
+		if (!isWebhookEnabled) {
+			return res.status(200).json({
+				status: 'ignored',
+				message: 'Webhook is disabled.'
+			});
+		}
+
+		const signature = req.headers['x-webhook-signature'];
+
+		if (!signature) {
+			return res.status(401).json({
+				error: 'Missing webhook signature'
+			});
+		}
+
+		const secretMkauth = Debug('MKAUTH').webhook;
+		const payloadString = req.rawBody || JSON.stringify(req.body || {});
+		const computedSignature = crypto
+			.createHmac('sha256', secretMkauth)
+			.update(payloadString)
+			.digest('hex');
+
+		if (signature !== computedSignature) {
+			return res.status(401).json({
+				error: 'Invalid webhook signature'
+			});
+		}
+
+		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot) || !Boolean(Debug('SCHEDULER').onpay)) {
+			return res.status(200).json({
+				status: 'ignored',
+				message: 'Validations disabled.'
+			});
+		}
+
+		const payload = req.body || {};
+		const dadosWebhook = payload.dados || payload;
+
+		let numeroTitulo = null;
+
+		numeroTitulo = dadosWebhook.titulo ||
+			dadosWebhook.id_titulo ||
+			dadosWebhook.code ||
+			dadosWebhook.nossonumero ||
+			dadosWebhook.seu_numero ||
+			dadosWebhook.id_transacao ||
+			dadosWebhook.custom_id ||
+			payload.titulo;
+
+		if (!numeroTitulo && dadosWebhook.historico) {
+			const matchHistorico = dadosWebhook.historico.match(/(?:titulo|tÃ­tulo|tit|fatura|boleto)\s*[:#-]?\s*(\d+)/i);
+			if (matchHistorico && matchHistorico[1]) {
+				numeroTitulo = matchHistorico[1];
+			}
+		}
+
+		if (!numeroTitulo) {
+			const rawContent = JSON.stringify(payload);
+			const matchTitulo = rawContent.match(/(?:titulo|tÃ­tulo|tit|nossonumero|fatura|boleto)\s*[:#-]?\s*(\d+)/i);
+			if (matchTitulo && matchTitulo[1]) {
+				numeroTitulo = matchTitulo[1];
+			}
+		}
+
+		if (numeroTitulo) {
+			const Resolve = await MkAuth('all', numeroTitulo, 'list');
+			const isBank = Array.isArray(Resolve) ? Resolve[0] : (Resolve ? Object.assign({}, Resolve)[0] : null);
+
+			if (isBank && (isBank.Payment === 'paid' || isBank.Payment === 'pago')) {
+				const localSchedule = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(isBank.Identifier);
+				const isBlocked = isBank.unLock === 'false' || isBank.unLock === '0' || isBank.unLock === false;
+				const processFactor = isBlocked ? 'unlock' : 'pending';
+
+				const messagePayload = {
+					client: isBank.Client || localSchedule?.client,
+					authority: isBank.Authority || isBank.Client || localSchedule?.client,
+					user: isBank.Connect || localSchedule?.user,
+					code: isBank.Identifier,
+					status: "finished",
+					contact: isBank.Contact || localSchedule?.contact,
+					reward: isBank.Reward || localSchedule?.reward,
+					push: DateTime(),
+					option: localSchedule?.option || isBank.Working,
+					unlock: isBank.unLock || 'true',
+					process: processFactor,
+					token: Debug('OPTIONS').token,
+					cash: isBank.Cash || localSchedule?.cash,
+					gateway: isBank.Gateway || localSchedule?.gateway || 'gerencianet',
+					payment: 'paid',
+					priority: 1
+				};
+
+				const processResult = await ProcessMkAuthMessage(messagePayload);
+
+				if (processResult && processResult.Status === "Success") {
+					await link.prepare('DELETE FROM scheduling WHERE title=?').run(isBank.Identifier);
+
+					if (global.io) {
+						global.io.emit('schedresume', {
+							title: isBank.Identifier,
+							status: 'paid'
+						});
+					}
+				}
+			}
+		}
+
+		return res.status(200).json({
+			status: 'success'
+		});
+	} catch (error) {
+		try {
+			const timestamp = new Date().toISOString();
+			const errorLog = `
+==================== ERRO PROCESSAMENTO ====================
+DATA/HORA: ${timestamp}
+MENSAGEM: ${error.message}
+STACK: ${error.stack}
+\n`;
+
+			await fs.promises.appendFile('./webhook.txt', errorLog, 'utf-8');
+		} catch (e) {
+
+		}
+
+		return res.status(500).json({
+			error: 'Internal Server Error'
+		});
+	}
+});
+
+const processedDispatchesToday = new Set();
+let currentDayCache = new Date().getDate();
+
+function isDuplicate(code, priority, processDate) {
+	const today = new Date().getDate();
+	if (today !== currentDayCache) {
+		processedDispatchesToday.clear();
+		currentDayCache = today;
+	}
+
+	const executionDate = processDate.split(" ")[0];
+
+	const uniqueKey = `${code}_P${priority}_${executionDate}`;
+
+	if (processedDispatchesToday.has(uniqueKey)) {
+		return true;
+	}
+
+	processedDispatchesToday.add(uniqueKey);
+	return false;
+}
+
+
+async function broadcastPanelStats(customEngine = null, customKeygen = null) {
+	try {
+		const options = Debug('OPTIONS');
+		const targetKeygen = customKeygen || options.keygen;
+		let inputEngine = customEngine || options.engine;
+
+		let targetModule = await new Promise((resolve) => {
+			db.get("SELECT module FROM engine WHERE title = ? OR id = ? OR module = ?", [inputEngine, inputEngine, inputEngine], (err, row) => {
+				resolve(row?.module || inputEngine);
+			});
+		});
+
+		let Balance = '0,00';
+		let Charge = null;
+
+		let OpenRouter = await Openrout(targetKeygen);
+
+		if (!OpenRouter || !OpenRouter.financial) {
+			return false;
+		}
+
+		const isInvalidCharge = (c) => !c || (c.input_cost_brl === '0,00' && c.output_cost_brl === '0,00');
+
+		Charge = OpenRouter.models?.find(m =>
+			m.id === targetModule ||
+			m.title === inputEngine ||
+			(m.id && targetModule && m.id.toLowerCase() === String(targetModule).toLowerCase())
+		);
+
+		if (isInvalidCharge(Charge)) {
+			await SyncEngineModules(targetKeygen);
+
+			targetModule = await new Promise((resolve) => {
+				db.get("SELECT module FROM engine WHERE title = ? OR id = ? OR module = ?", [inputEngine, inputEngine, inputEngine], (err, row) => {
+					resolve(row?.module || inputEngine);
+				});
+			});
+
+			OpenRouter = await Openrout(targetKeygen);
+			Charge = OpenRouter?.models?.find(m =>
+				m.id === targetModule ||
+				m.title === inputEngine ||
+				(m.id && targetModule && m.id.toLowerCase() === String(targetModule).toLowerCase())
+			);
+		}
+
+		Balance = OpenRouter?.financial?.balance_brl || '0,00';
+
+		const AskBrains = await new Promise((resolve) => {
+			db.get("SELECT COUNT(*) AS total FROM intelligence", [], (err, row) => {
+				resolve(row ? row.total : 0);
+			});
+		});
+
+		const socketEvents = {
+			AskBalance: Balance,
+			AskInput: Charge?.input_cost_brl || '0,00',
+			AskOutput: Charge?.output_cost_brl || '0,00',
+			AskBrain: AskBrains
+		};
+
+		if (global.io) {
+			for (const [event, value] of Object.entries(socketEvents)) {
+				global.io.emit(event, value);
+			}
+		}
+
+		return true;
+	} catch (err) {
+		return false;
+	}
+}
+
 const Print = {
 	reset: "\x1b[0m",
 	bright: "\x1b[1m",
@@ -74,7 +516,7 @@ const Print = {
 		cyan: "\x1b[36m",
 		white: "\x1b[37m",
 		gray: "\x1b[90m",
-		crimson: "\x1b[38m" // Scarlet
+		crimson: "\x1b[38m"
 	},
 	bg: {
 		black: "\x1b[40m",
@@ -90,141 +532,94 @@ const Print = {
 	}
 };
 
-//Delay
+// Delay
 function delay(t, v) {
-	return new Promise(function(resolve) {
-		setTimeout(resolve.bind(null, v), t)
+	return new Promise((resolve) => {
+		setTimeout(resolve.bind(null, v), t);
 	});
 }
 
-//Capitalize
+// Get Date
+function AddZero(num) {
+	return (num >= 0 && num < 10) ? "0" + num : String(num);
+}
+
+// Capitalize
 function toCapitalize(str) {
+	if (!str) return "";
 	return str
 		.toLowerCase()
 		.split(' ')
-		.map(word => word.charAt(0).toUpperCase() + word.substr(1))
+		.map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : '')
 		.join(' ');
 }
 
-//Search DataBase
+// Search DataBase
 function Debug(Select, Search = '*', Mode = 'single', Find = undefined) {
-	switch (Mode.toLowerCase()) {
-		case "single":
-			Select = link.prepare('SELECT ' + Search.toLowerCase() + ' FROM ' + Select.toLowerCase() + ' ORDER BY ID DESC').get();
-			if (!Select) {
-				Select = false;
-			}
-			break;
-		case "multiple":
-			Select = link.prepare('SELECT ' + Search.toLowerCase() + ' FROM ' + Select.toLowerCase()).pluck().all();
-			if (!Select) {
-				Select = false;
-			}
-			break;
-		case "all":
-			Select = link.prepare('SELECT ' + Search.toLowerCase() + ' FROM ' + Select.toLowerCase() + ' ORDER BY ID DESC').all();
-			if (!Select) {
-				Select = false;
-			}
-			break;
-		case "direct":
-			Select = link.prepare('SELECT ' + Search.toLowerCase() + ' FROM ' + Select.toLowerCase() + ' WHERE title = ?').get(Find);
-			if (!Select) {
-				Select = false;
-			}
-			break;
-		case "id":
-			Select = link.prepare('SELECT ' + Search.toLowerCase() + ' FROM ' + Select.toLowerCase() + ' WHERE id = ?').get(Find);
-			if (!Select) {
-				Select = false;
-			}
-			break;
-	}
-	return Select;
+	const table = Select.toLowerCase();
+	const fields = Search.toLowerCase();
+	const mode = Mode.toLowerCase();
+
+	const queries = {
+		single: () => link.prepare(`SELECT ${fields} FROM ${table} ORDER BY ID DESC`).get(),
+		multiple: () => link.prepare(`SELECT ${fields} FROM ${table}`).pluck().all(),
+		all: () => link.prepare(`SELECT ${fields} FROM ${table} ORDER BY ID DESC`).all(),
+		direct: () => link.prepare(`SELECT ${fields} FROM ${table} WHERE title = ?`).get(Find),
+		id: () => link.prepare(`SELECT ${fields} FROM ${table} WHERE id = ?`).get(Find)
+	};
+
+	return queries[mode] ? queries[mode]() : undefined;
 }
 
+
+// Debug
 function DebugMsg(Selector) {
-	var Last = Debug('MKAUTH').count,
-		Return, Mode = Debug('MKAUTH').level,
-		Message;
-	switch (Mode.toLowerCase()) {
-		case "direct":
-			Return = 1;
-			break;
-		case "random":
-			Return = Math.floor(Math.random() * (3 - 1 + 1) + 1);
-			break;
-		case "order":
-			switch (Last) {
-				case 1:
-					Return = 2;
-					break;
-				case 2:
-					Return = 3;
-					break;
-				case 3:
-					Return = 1;
-					break;
-			}
-			break;
-	}
-	switch (Selector.toLowerCase()) {
-		case "before":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').before;
-			break;
+	const mkauth = Debug('MKAUTH') || {};
+	const last = mkauth.count || 0;
+	const mode = (mkauth.level || '').toLowerCase();
 
-		case "day":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').day;
-			break;
+	const modeStrategies = {
+		direct: () => 1,
+		random: () => Math.floor(Math.random() * 3) + 1,
+		order: () => (last >= 1 && last <= 3) ? (last % 3) + 1 : 1
+	};
 
-		case "later":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').later;
-			break;
+	const returnId = (modeStrategies[mode] || modeStrategies.direct)();
+	const msgRecord = Debug('MESSAGE', '*', 'ID', String(returnId));
+	const message = msgRecord?.[Selector.toLowerCase()];
 
-		case "pay":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').pay;
-			break;
-
-		case "lock":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').lock;
-			break;
-
-		case "unlock":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').unlock;
-			break;
-
-		case "maintenance":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').maintenance;
-			break;
-
-		case "unistall":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').unistall;
-			break;
-
-		case "speed":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').speed;
-			break;
-
-		case "block":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').block;
-			break;
-
-		case "support":
-			Message = Debug('MESSAGE', '*', 'ID', '' + Return + '').support;
-			break;
-	}
-	Dataset('MKAUTH', 'COUNT', Return, 'UPDATE');
-	return Message;
+	Dataset('MKAUTH', 'COUNT', returnId, 'UPDATE');
+	return message;
 }
 
-//RegEx
+
+// SetDDI
+function DDISet(contact) {
+	if (!contact) return "";
+	let numero = String(contact).replace(/\D/g, "").replace(/^0+/, "");
+	if (!numero.startsWith("55") && (numero.length === 10 || numero.length === 11)) {
+		numero = "55" + numero;
+	}
+	if (numero.startsWith("55") && numero.length === 12) {
+		let ddiEddd = numero.substr(0, 4);
+		let local = numero.substr(4);
+		if (/^[6-9]/.test(local)) {
+			local = "9" + local;
+		}
+		return ddiEddd + local;
+	}
+	return numero;
+}
+
+// RegEx
 function validPhone(phone) {
-	var regex = new RegExp('^((1[1-9])|([2-9][0-9]))((3[0-9]{3}[0-9]{4})|(9[0-9]{3}[0-9]{5}))$');
-	if (Boolean(Debug('OPTIONS').regex)) {
-		return regex.test(phone.replace('55', ''));
-	} else {
+	if (!Boolean(Debug('OPTIONS').regex)) {
 		return true;
 	}
+	if (!phone) return false;
+	const numeroFormatado = DDISet(phone);
+	const regexWhatsApp = /^55((1[1-9])|([2-9][0-9]))9\d{8}$/;
+	return regexWhatsApp.test(numeroFormatado);
 }
 
 function PromiseTimeout(delayms) {
@@ -233,93 +628,90 @@ function PromiseTimeout(delayms) {
 	});
 }
 
-//Manipulation DataBase
-const Dataset = async (Table, Column, Value, Mode) => {
-	switch (Mode.toLowerCase()) {
-		case "update":
-			Select = await link.prepare('UPDATE ' + Table.toLowerCase() + ' SET ' + Column.toLowerCase() + ' = ? WHERE id = ?').run(Value, '1');
-			if (Select) {
-				Select = true;
-			} else {
-				Select = false;
-			}
-			break;
-		case "insert":
-			Select = await link.prepare('INSERT INTO ' + Table.toLowerCase() + ' (' + Column.toLowerCase() + ') VALUES (?)').run(Value);
-			if (Select) {
-				Select = link.prepare('SELECT * FROM ' + Table.toLowerCase() + ' ORDER BY ID DESC').get().id;
-			} else {
-				Select = false
-			}
-			break;
-		case "delete":
-			Select = await link.prepare('DELETE FROM ' + Table.toLowerCase() + ' WHERE id = ?').run(Value);
-			if (Select) {
-				Select = true;
-			} else {
-				Select = false;
-			}
-			break;
-		case "flush":
-			const Flush = (link.prepare('SELECT * FROM ' + Value.toLowerCase()).all()).length;
-			Select = await link.prepare('UPDATE ' + Table.toLowerCase() + ' SET ' + Column.toLowerCase() + ' = ? WHERE NAME = ?').run(Flush.toString(), Value.toLowerCase());
-			if (Select) {
-				Select = true;
-			} else {
-				Select = false;
-			}
-			break;
+// Check Whatsapp
+async function checkWhatsAppNumber(phone) {
+	if (!validPhone(phone)) return false;
+	try {
+		const numberDetails = await client.getNumberId(phone);
+		if (!numberDetails) return false;
+		if (numberDetails.server === 'lid') {
+			return phone;
+		}
+
+		return numberDetails._serialized || phone;
+	} catch (error) {
+		return false;
 	}
-	return await Select;
 }
+
+// Manipulation DataBase
+const Dataset = async (Table, Column, Value, Mode) => {
+	const table = Table.toLowerCase();
+	const column = Column ? Column.toLowerCase() : '';
+	const mode = Mode.toLowerCase();
+
+	try {
+		const operations = {
+			update: () => {
+				const result = link.prepare(`UPDATE ${table} SET ${column} = ? WHERE id = ?`).run(Value, '1');
+				return result.changes > 0;
+			},
+			insert: () => {
+				const result = link.prepare(`INSERT INTO ${table} (${column}) VALUES (?)`).run(Value);
+				return result.lastInsertRowid || false;
+			},
+			delete: () => {
+				const result = link.prepare(`DELETE FROM ${table} WHERE id = ?`).run(Value);
+				return result.changes > 0;
+			},
+			flush: () => {
+				const target = String(Value).toLowerCase();
+				const countResult = link.prepare(`SELECT COUNT(*) as total FROM ${target}`).get();
+				const total = countResult?.total || 0;
+				const result = link.prepare(`UPDATE ${table} SET ${column} = ? WHERE NAME = ?`).run(total.toString(), target);
+				return result.changes > 0;
+			}
+		};
+
+		return operations[mode] ? operations[mode]() : false;
+	} catch (err) {
+		return false;
+	}
+};
 
 
 const isEmoji = (Value) => {
-	if (true) {
-		if (typeof Value === 'string') {
-			return emoji.emojify(Value);
-		} else {
-			return Value;
-		}
-	} else {
-		return Value;
-	}
-}
+	return typeof Value === 'string' ? emoji.emojify(Value) : Value;
+};
 
-//Boolean Validation
+
+// Boolean Validation
 const Boolean = function(str) {
-	if (str == null) {
+	if (str == null || str === "") {
 		return undefined;
 	}
+
 	if (typeof str === 'boolean') {
-		if (str === true) {
-			return true;
-		}
-		return false;
+		return str;
 	}
+
 	if (typeof str === 'string') {
-		if (str == "") {
-			return undefined;
-		}
-		str = str.replace(/^\s+|\s+$/g, '');
-		if (str.toLowerCase() == 'true' || str.toLowerCase() == 'yes') {
-			return true;
-		} else if (str.toLowerCase() == 'false' || str.toLowerCase() == 'not') {
-			return false;
-		} else {
-			return undefined;
-		}
-		str = str.replace(/,/g, '.');
-		str = str.replace(/^\s*\-\s*/g, '-');
+		const trimmed = str.trim().toLowerCase();
+		if (['true', 'yes', '1'].includes(trimmed)) return true;
+		if (['false', 'not', '0', 'no'].includes(trimmed)) return false;
+		return undefined;
 	}
+
+	if (typeof str === 'number') {
+		return str !== 0;
+	}
+
 	if (!isNaN(str)) {
-		if (parseFloat(str)) {
-			return true;
-		}
-		return false;
+		return parseFloat(str) !== 0;
 	}
+
 	return undefined;
-}
+};
 
 //ForEach Async Mode
 Array.prototype.someAsync = function(callbackfn) {
@@ -361,507 +753,564 @@ function ArrayPosition(...criteria) {
 }
 
 const GetUpdate = async (GET, SET, GUPForce = false) => {
-	var Status, Conclusion = true,
-		Updated, Response,
-		isDateTime = Debug('RELEASE').mwsm;
-	const Upgrade = async (GET) => {
-		const Update = await fetch(GET).then(response => {
-			return response.json();
-		}).catch(err => {
+	let status = false;
+	let updated = "false";
+	let conclusion = true;
+
+	const fetchRemoteVersion = async (url) => {
+		try {
+			const res = await fetch(url);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			return await res.json();
+		} catch (err) {
 			return {
 				version: [{
 					release: '0.0.0',
 					patch: '0000-00-00 00:00:00'
 				}]
-			}
-		});
-		return Update;
+			};
+		}
 	};
-	const isUpdate = await Upgrade(GET);
-	const Nowdate = await Upgrade("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/version.json");
-	if (isDateTime == "undefined" || isDateTime == null) {
+
+	const getLocalVersion = () => {
+		try {
+			const localFilePath = path.join(__dirname, 'version.json');
+			if (fs.existsSync(localFilePath)) {
+				return JSON.parse(fs.readFileSync(localFilePath, 'utf8'));
+			}
+		} catch (e) {}
+		return {
+			version: [{
+				release: '0.0.0',
+				patch: '0000-00-00 00:00:00'
+			}]
+		};
+	};
+
+	const isUpdate = await fetchRemoteVersion(GET);
+	const nowdate = getLocalVersion();
+
+	const remotePatch = isUpdate?.version?.[0]?.patch || '0000-00-00 00:00:00';
+	const remoteRelease = isUpdate?.version?.[0]?.release || '0.0.0';
+	const localPatch = nowdate?.version?.[0]?.patch || '0000-00-00 00:00:00';
+
+	let isDateTime = Debug('RELEASE').mwsm;
+	if (!isDateTime || isDateTime === "undefined") {
 		isDateTime = "0000-00-00 00:00:00";
 	}
-	if ((isUpdate['version'][0].patch == Nowdate['version'][0].patch) && !SET) {
-		Status = false;
-		if (Conclusion) {
-			Conclusion = false;
-			if ((Debug('RELEASE').mwsm != Nowdate['version'][0].patch)) {
-				const Register = await Dataset('RELEASE', 'MWSM', (Nowdate['version'][0].patch), 'UPDATE');
-				if (Register) {
-					await global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
-					await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isalready);
-					console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isalready);
-					await global.io.emit('update', true);
+
+	const appName = Debug('OPTIONS').appname;
+
+	if (remotePatch === localPatch && !SET && !GUPForce) {
+		status = false;
+		if (conclusion) {
+			conclusion = false;
+
+			if (Debug('RELEASE').mwsm !== localPatch) {
+				const register = await Dataset('RELEASE', 'MWSM', localPatch, 'UPDATE');
+				if (register) {
+					global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
+					global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isalready}`);
+					global.io.emit('update', true);
 				}
 			} else {
-				await global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
-				await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isalready);
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isalready);
+				global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
+				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isalready}`);
 			}
 		}
-		Updated = "false";
-		await global.io.emit('upgrade', true);
+		updated = "false";
+		global.io.emit('upgrade', true);
 		await WwjsVersion(false);
-	} else {
-		if ((isUpdate['version'][0].release > Package.version)) {
-			if (!SET) {
-				await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isneeds);
-				await console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isneeds);
-				WwjsVersion(false);
-			}
-			Updated = "false";
-			await global.io.emit('upgrade', false);
-		} else {
-			if ((isUpdate['version'][0].patch > isDateTime)) {
-				await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isfound);
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isfound);
-				await global.io.emit('upgrade', false);
-				if (SET && (Boolean(Debug('RELEASE').isupdate) || Boolean(GUPForce))) {
-					const Register = await Dataset('RELEASE', 'MWSM', (isUpdate['version'][0].patch), 'UPDATE');
-					if (Register) {
-						await global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
-						await global.io.emit('upgrade', true);
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isupfiles);
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isupdated);
-						await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isupdated);
-						await wget("https://raw.githubusercontent.com/MKCodec/Mwsm/main/script.js", "/var/api/Mwsm/script.js");
-						await wget("https://raw.githubusercontent.com/MKCodec/Mwsm/main/style.css", "/var/api/Mwsm/style.css");
-						await wget("https://raw.githubusercontent.com/MKCodec/Mwsm/main/index.html", "/var/api/Mwsm/index.html");
-						await wget("https://raw.githubusercontent.com/MKCodec/Mwsm/main/mwsm.js", "/var/api/Mwsm/mwsm.js");
-						await global.io.emit('update', true);
-						await exec('npm run restart:mwsm');
-						WwjsVersion(true);
-						Updated = "true";
-					} else {
-						Updated = "false";
-						await global.io.emit('upgrade', false);
-					}
-					Status = true;
-				} else if (Conclusion) {
-					Conclusion = false;
-					Status = true;
-					if (!SET) {
-						await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isneeds);
-						await console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isneeds);
-					}
-					await global.io.emit('upgrade', false);
-					Updated = "false";
-				}
-			} else if (Conclusion) {
-				Conclusion = false;
-				Status = false;
-				if (!SET) {
-					await global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isalready);
-					console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').isalready);
-				}
-				await global.io.emit('upgrade', true);
-				Updated = "false";
-			}
+
+	} else if (remoteRelease > Package.version && !GUPForce) {
+		if (!SET) {
+			global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isneeds}`);
+			await WwjsVersion(false);
 		}
+		updated = "false";
+		global.io.emit('upgrade', false);
+
+	} else if (remotePatch > isDateTime || GUPForce) {
+		global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isfound}`);
+		global.io.emit('upgrade', false);
+
+		const isUpdateAllowed = Boolean(Debug('RELEASE').isupdate) || Boolean(GUPForce);
+
+		if (SET && isUpdateAllowed) {
+			const register = await Dataset('RELEASE', 'MWSM', remotePatch, 'UPDATE');
+
+			if (register) {
+				global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
+				global.io.emit('upgrade', true);
+
+				const baseUrl = "https://raw.githubusercontent.com/MKCodec/Mwsm/main";
+				const targetDir = "/var/api/Mwsm";
+
+				const filesToDownload = [
+					'script.js',
+					'style.css',
+					'index.html',
+					'mwsm.js',
+					'version.json'
+				];
+
+				for (const file of filesToDownload) {
+					try {
+						await wget(`${baseUrl}/${file}`, `${targetDir}/${file}`);
+
+						if (file === 'mwsm.js') {
+							let content = await fsPromises.readFile(`${targetDir}/${file}`, 'utf8');
+							if (!content.includes('createRequire')) {
+								const header = `import { createRequire } from 'module';\nimport { fileURLToPath } from 'url';\nimport path from 'path';\nconst require = createRequire(import.meta.url);\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = path.dirname(__filename);\n\n`;
+								content = header + content;
+								await fsPromises.writeFile(`${targetDir}/${file}`, content, 'utf8');
+							}
+						}
+					} catch (err) {}
+				}
+
+				try {
+					await exec(`mkdir -p ${targetDir}/patches`);
+
+					const patchFile = 'whatsapp-web.js+1.34.7.patch';
+					await wget(`${baseUrl}/patches/${patchFile}`, `${targetDir}/patches/${patchFile}`);
+				} catch (err) {}
+
+				try {
+					const {
+						stdout,
+						stderr
+					} = await exec('npx patch-package');
+				} catch (err) {}
+
+				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isupdated}`);
+
+				global.io.emit('update', true);
+
+				try {
+					await exec('npm run restart:mwsm');
+				} catch (err) {}
+
+				await WwjsVersion(true);
+				updated = "true";
+			} else {
+				updated = "false";
+				global.io.emit('upgrade', false);
+			}
+			status = true;
+
+		} else if (conclusion) {
+			conclusion = false;
+			status = true;
+			if (!SET) {
+				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isneeds}`);
+			}
+			global.io.emit('upgrade', false);
+			updated = "false";
+		}
+
+	} else if (conclusion) {
+		conclusion = false;
+		status = false;
+		if (!SET) {
+			global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isalready}`);
+		}
+		global.io.emit('upgrade', true);
+		updated = "false";
 	}
-	Response = {
-		"Status": Status,
-		"Update": Updated
+
+	return {
+		Status: status,
+		Update: updated
 	};
+};
 
-	return Response;
-}
 
-//Set Debugger
+// Set Debugger
 function Terminal(Value) {
 	if (Boolean(Debug('OPTIONS').debugger)) {
 		console.error(Value);
 	}
 }
 
-//Get Release
+// Get Release
 function Release(Value) {
-	return (new Date(Value).toLocaleString("pt-br").split(",")[0]) + " " + ((Value).split(" ")[1]).split(":")[0] + ":" + ((Value).split(" ")[1]).split(":")[1]
+	const [datePart, timePart = ''] = String(Value).split(' ');
+	const formattedDate = new Date(datePart).toLocaleDateString('pt-BR');
+	const [hours = '00', minutes = '00'] = timePart.split(':');
+
+	return `${formattedDate} ${hours}:${minutes}`;
 }
 
+
+const checkRedisSentToday = async (code) => {
+	try {
+		const targetCode = String(code).trim();
+
+		const isTargetJob = (job) => {
+			const jobData = job.data || {};
+			const jobOpts = job.opts || {};
+			const priority = jobData.priority ?? jobOpts.priority;
+			const jobCode = String(jobData.code || '').trim();
+
+			return jobCode === targetCode && Number(priority) === 4;
+		};
+
+		const pendingJobs = await queue.getJobs(['waiting', 'active', 'delayed', 'prioritized'], 0, 1000);
+
+		const jaEstaNaFila = pendingJobs.some(isTargetJob);
+
+		if (jaEstaNaFila) {
+			return true;
+		}
+
+		const completedJobs = await queue.getCompleted(0, 2000);
+
+		if (!completedJobs || completedJobs.length === 0) {
+			return false;
+		}
+
+		const jobsConcluidos = completedJobs.filter(isTargetJob);
+
+		if (jobsConcluidos.length === 0) {
+			return false;
+		}
+
+		jobsConcluidos.sort((a, b) => {
+			const timeA = a.finishedOn || a.timestamp || 0;
+			const timeB = b.finishedOn || b.timestamp || 0;
+			return timeB - timeA;
+		});
+
+		const ultimoJob = jobsConcluidos[0];
+		const returnValue = ultimoJob.returnvalue || {};
+		const foiSucesso = returnValue.Status === "Success";
+
+		const hoje = new Date();
+		const hojeStr = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
+
+		let dataUltimoJobStr = "";
+		if (ultimoJob.finishedOn) {
+			const dataJob = new Date(ultimoJob.finishedOn);
+			dataUltimoJobStr = `${dataJob.getFullYear()}-${String(dataJob.getMonth() + 1).padStart(2, '0')}-${String(dataJob.getDate()).padStart(2, '0')}`;
+		}
+
+		const enviadoHoje = foiSucesso && (dataUltimoJobStr === hojeStr);
+
+		return enviadoHoje;
+
+	} catch (error) {
+		return false;
+	}
+};
 
 const SetSchedule = async (ShedForce = false) => {
-	if (Boolean(Debug('MKAUTH').module) && (Boolean(Debug('MKAUTH').aimbot) || Boolean(ShedForce))) {
-		var Register, Insert, hasDays = [],
-			Option, Index = 0,
-			Count = 0,
-			hasReady = [],
-			isSHED = [],
-			ShedReload = true;
-		const Month = ((DateTime()).split(" ")[0]).split("-")[1];
-		const Windows = await MkAuth(Month, "all", 'list');
-		if (Boolean(Debug('SCHEDULER').bfive)) {
-			Option = undefined;
-			GetDays = {
-				"Mode": "Later",
-				"Set": 5,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').inday)) {
-			Option = undefined;
-			GetDays = {
-				"Mode": "Now",
-				"Set": 0,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').lfive) || (Debug('SCHEDULER').speed == 5)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 5)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 5,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').lten) || (Debug('SCHEDULER').speed == 10)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 10)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 10,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').lfifteen) || (Debug('SCHEDULER').speed == 15)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 15)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 15,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').ltwenty) || (Debug('SCHEDULER').speed == 20)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 20)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 20,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').ltwentyfive) || (Debug('SCHEDULER').speed == 25)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 25)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 25,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
+	if (Boolean(Debug('ENGINE', 'ACTIVE', 'DIRECT', Debug('OPTIONS').engine)?.active)) {
+		await SyncEngineModules();
+	}
+	const mkConfig = Debug('MKAUTH');
+	const schedulerConfig = Debug('SCHEDULER');
 
-		}
-		if (Boolean(Debug('SCHEDULER').lthirty) || (Debug('SCHEDULER').speed == 30)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 30)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 30,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').lthirtyfive) || (Debug('SCHEDULER').speed == 35)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 35)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 35,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').lforty) || (Debug('SCHEDULER').speed == 40)) {
-			Option = undefined;
-			if (Boolean(Debug('SCHEDULER').onspeed) && (Debug('SCHEDULER').speed == 40)) {
-				Option = "speed";
-			}
-			GetDays = {
-				"Mode": "Before",
-				"Set": 40,
-				"Option": Option
-			};
-			hasDays.push(GetDays);
-		}
-		if (Boolean(Debug('SCHEDULER').onblock)) {
-			GetDays = {
-				"Mode": "Before",
-				"Set": Debug('SCHEDULER').block,
-				"Option": "Block"
-			};
-			hasDays.push(GetDays);
-		}
-		(hasDays).someAsync(async (Days) => {
-			const Master = await Scheduller(Days.Set, Days.Mode);
-			if (await Master) {
-				if (Master != undefined) {
-					(Master).someAsync(async (Send) => {
-						MsgSET = false;
-						if (Send.celular != undefined) {
-							Send.celular = (Send.celular).replace(/[^0-9\\.]+/g, '');
-						} else {
-							Send.celular = "00000000000";
-						}
-						if (Boolean(Debug('OPTIONS').regex)) {
-							switch (Boolean(validPhone(Send.celular))) {
-								case true:
-									WhatsApp = 'true';
-									break;
-								case false:
-									WhatsApp = 'false';
-									break;
-							}
-						} else {
-							WhatsApp = 'true';
-						}
-						switch (Send.status) {
-							case 'aberto':
-								Send.status = 'open';
-								break;
-							case 'pago':
-								Send.status = 'paid';
-								break;
-							case 'vencido':
-								Send.status = 'due';
-								break;
-							case 'cancelado':
-								Send.status = 'cancel';
-								break;
-						}
-						switch (Send.bloqueado) {
-							case 'sim':
-								Send.bloqueado = 'false';
-								break;
-							case 'nao':
-								Send.bloqueado = 'true';
-								break;
-						}
+	if (!Boolean(mkConfig?.module) || (!Boolean(mkConfig?.aimbot) && !Boolean(ShedForce))) {
+		return;
+	}
 
-						switch (Send.cli_ativado) {
-							case 's':
-								Send.cli_ativado = 'true';
-								break;
-							case 'n':
-								Send.cli_ativado = 'false';
-								break;
-						}
+	var hasDays = [],
+		Index = 0,
+		hasReady = [],
+		isSHED = [];
 
-						switch (Send.zap) {
-							case 'sim':
-								Send.zap = 'true';
-								break;
-							case 'nao':
-								Send.zap = 'false';
-								break;
-						}
-						if (((Send.datavenc).split(" ")[0]) == (DateTime()).split(" ")[0] && (Send.status) != 'paid' && (Send.status) != 'cancel') {
-							Send.status = 'open';
-						}
-						if (Boolean(Send.cli_ativado) && Send.status != 'paid' && Send.status != 'cancel' && Boolean(WhatsApp) && Boolean(Send.zap)) {
-							Index = Index + 1;
-							const Replies = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(Send.titulo);
-							if (!Boolean(ShedForce)) {
-								GetSHED = {
-									"TITLE": Send.titulo,
-									"CLIENT": Send.nome,
-									"REWARD": Send.datavenc
-								};
-								isSHED.push(GetSHED);
-								await global.io.emit('shedullers', isSHED);
-							}
-							if (Replies == undefined) {
-								const ShedInsert = await link.prepare("INSERT INTO scheduling(title, user, client, contact, reward, status, range, control, option, unlock) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(Send.titulo, Send.login, Send.nome, Send.celular, Send.datavenc, Send.status, Days.Mode, Days.Set, Days.Option, Send.cli_ativado);
-								if (ShedInsert) {
-									MsgSET = true;
-									Hwid = {
-										"ID": Send.login
-									};
-									hasReady.push(Hwid);
-								}
-							} else {
-								const exUpdate = await link.prepare('SELECT * FROM scheduling WHERE title=? AND process=?').get(Send.titulo, "wait");
-								if (exUpdate == undefined || Option != exUpdate.option) {
-									const ShedUpdate = await link.prepare('UPDATE scheduling SET process=?, contact=?, option=?, control=?, unlock=? WHERE title=?').run("wait", Send.celular, Days.Option, Days.Set, Send.cli_ativado, Send.titulo);
-									if (ShedUpdate) {
-										MsgSET = true;
-										Hwid = {
-											"ID": Send.login
-										};
-										hasReady.push(Hwid);
-									}
-								}
-							}
-						} else {
-							//Client Disable
-						}
-						if ((hasReady.length == Index) && MsgSET) {
-							global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').schedule);
-							console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').schedule);
-							MsgSET = false;
-						}
-
-					});
-				}
-			}
+	if (Boolean(schedulerConfig?.bfive)) {
+		hasDays.push({
+			"Mode": "Before",
+			"Set": 5,
+			"Option": undefined
 		});
-		if (await Windows) {
-			Register = (Windows).filter(function(Send) {
-				return Send.Payment != 'paid';
-			}).length;
-			if (!Boolean(ShedForce)) {
-				ShedReload = Debug('MKAUTH').backup;
-			}
-			if (Boolean(ShedReload) && Register >= 1) {
-				if (Windows != undefined) {
-					(Windows).someAsync(async (Bank) => {
-						if (Bank.Payment != "paid" && Boolean(Bank.Ready)) {
-							if (Bank.Contact == undefined) {
-								Bank.Contact = "00000000000";
-							}
-							if (Debug('SCHEDULING', 'TITLE', 'MULTIPLE').some(Row => (Bank.Identifier).includes(Row))) {
-								await link.prepare('UPDATE scheduling SET cash=?, gateway=?, unlock=?  WHERE title=?').run(Bank.Cash, Bank.Gateway, Bank.unLock, Bank.Identifier);
-							} else {
-								await link.prepare('INSERT INTO scheduling(title,user,client,contact,reward,status,process,cash,gateway,unlock) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(Bank.Identifier, Bank.Connect, Bank.Client, Bank.Contact, Bank.Reward, Bank.Payment, 'load', Bank.Cash, Bank.Gateway, Bank.unLock);
-							}
-						} else {
-							(Debug('SCHEDULING', '*', 'ALL')).someAsync(async (Del) => {
-								if (Del.process == "success" && Del.status == "paid") {
-									await link.prepare('DELETE FROM scheduling WHERE title=?').run(Del.title);
-								}
+	}
+	if (Boolean(schedulerConfig?.inday)) {
+		hasDays.push({
+			"Mode": "Now",
+			"Set": 0,
+			"Option": undefined
+		});
+	}
+
+	[5, 10, 15, 20, 25, 30, 35, 40].forEach((speedVal) => {
+		const speedKey = ['lfive', 'lten', 'lfifteen', 'ltwenty', 'ltwentyfive', 'lthirty', 'lthirtyfive', 'lforty'][([5, 10, 15, 20, 25, 30, 35, 40].indexOf(speedVal))];
+		if (Boolean(schedulerConfig?.[speedKey]) || schedulerConfig?.speed == speedVal) {
+			hasDays.push({
+				"Mode": "Later",
+				"Set": speedVal,
+				"Option": (Boolean(schedulerConfig?.onspeed) && schedulerConfig?.speed == speedVal) ? "speed" : undefined
+			});
+		}
+	});
+
+	if (Boolean(schedulerConfig?.onblock)) {
+		hasDays.push({
+			"Mode": "Later",
+			"Set": schedulerConfig?.block,
+			"Option": "Block"
+		});
+	}
+
+	if (hasDays.length === 0) {
+		return;
+	}
+
+	await (hasDays).someAsync(async (Days) => {
+		const today = new Date();
+		let targetDate = new Date(today);
+
+		if (Days.Mode === "Before") {
+			targetDate.setDate(today.getDate() + Days.Set);
+		} else if (Days.Mode === "Later") {
+			targetDate.setDate(today.getDate() - Days.Set);
+		}
+
+		const targetMonth = String(targetDate.getMonth() + 1).padStart(2, '0');
+
+		const Windows = await MkAuth(targetMonth, "all", 'list');
+		const Master = await Scheduller(Days.Set, Days.Mode);
+
+		if (Master && Array.isArray(Master) && Master.length > 0) {
+			Master.sort((a, b) => new Date(a.datavenc || a.Reward) - new Date(b.datavenc || b.Reward));
+
+			await (Master).someAsync(async (Send) => {
+				let MsgSET = false;
+
+				const titulo = Send.titulo || Send.Identifier;
+				const login = Send.login || Send.Connect;
+				const celular = Send.celular ? String(Send.celular).replace(/[^0-9\\.]+/g, '') : (Send.Contact ? String(Send.Contact).replace(/[^0-9\\.]+/g, '') : "00000000000");
+				const nomeAutoridade = Send.Authority || Send.nome || Send.Client || Send.nome_res || "Cliente";
+				const nomeCliente = Send.Client || Send.nome_res || Send.nome || Send.Authority || "Cliente";
+				const datavenc = Send.datavenc || Send.Reward;
+				let status = Send.status || Send.Payment;
+
+				const cliAtivadoRaw = Send.cli_ativado !== undefined ? Send.cli_ativado : Send.Working;
+				const zapRaw = Send.zap !== undefined ? Send.zap : Send.Ready;
+
+				let WhatsApp = true;
+				if (Boolean(Debug('OPTIONS')?.regex)) {
+					WhatsApp = validPhone(celular);
+				}
+
+				const statusMap = {
+					'aberto': 'open',
+					'pago': 'paid',
+					'vencido': 'due',
+					'cancelado': 'cancel'
+				};
+				if (statusMap[status]) status = statusMap[status];
+
+				const isCliAtivo = cliAtivadoRaw === 's' || cliAtivadoRaw === 'sim' || cliAtivadoRaw === 'true' || cliAtivadoRaw === true;
+				const isZapAtivo = zapRaw === 'sim' || zapRaw === 's' || zapRaw === 'true' || zapRaw === true;
+
+				if (datavenc && ((datavenc).split(" ")[0]) == (DateTime()).split(" ")[0] && status != 'paid' && status != 'cancel') {
+					status = 'open';
+				}
+
+				const podeAgendar = isCliAtivo && status !== 'paid' && status !== 'cancel' && WhatsApp && isZapAtivo;
+
+				if (podeAgendar) {
+					Index++;
+					const Replies = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(titulo);
+
+					if (!Boolean(ShedForce)) {
+						isSHED.push({
+							"TITLE": titulo,
+							"CLIENT": nomeCliente,
+							"REWARD": datavenc
+						});
+					}
+
+					if (Replies == undefined) {
+						const ShedInsert = await link.prepare(
+							"INSERT INTO scheduling(title, user, authority, client, contact, reward, status, range, control, option, unlock, process) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+						).run(
+							titulo,
+							login,
+							nomeAutoridade,
+							nomeCliente,
+							celular,
+							datavenc,
+							status,
+							Days.Mode,
+							Days.Set,
+							Days.Option,
+							isCliAtivo ? 's' : 'n',
+							'wait'
+						);
+
+						if (ShedInsert) {
+							MsgSET = true;
+							hasReady.push({
+								"ID": login
 							});
 						}
-					});
+					} else {
+						if (Replies.process === 'load') {
+							const enviadoHojeNoRedis = await checkRedisSentToday(titulo);
+
+							if (!enviadoHojeNoRedis) {
+								const ShedUpdate = await link.prepare(
+									'UPDATE scheduling SET process=?, contact=?, option=?, control=?, range=?, status=?, unlock=?, client=?, authority=? WHERE title=?'
+								).run("wait", celular, Days.Option, Days.Set, Days.Mode, status, isCliAtivo ? 's' : 'n', nomeCliente, nomeAutoridade, titulo);
+
+								if (ShedUpdate) {
+									MsgSET = true;
+									hasReady.push({
+										"ID": login
+									});
+								}
+							}
+						} else if (Replies.process !== 'success') {
+							const exUpdate = await link.prepare('SELECT * FROM scheduling WHERE title=? AND process=?').get(titulo, "wait");
+							if (exUpdate == undefined || Days.Option != exUpdate.option) {
+								const ShedUpdate = await link.prepare(
+									'UPDATE scheduling SET process=?, contact=?, option=?, control=?, range=?, status=?, unlock=?, client=?, authority=? WHERE title=?'
+								).run("wait", celular, Days.Option, Days.Set, Days.Mode, status, isCliAtivo ? 's' : 'n', nomeCliente, nomeAutoridade, titulo);
+
+								if (ShedUpdate) {
+									MsgSET = true;
+									hasReady.push({
+										"ID": login
+									});
+								}
+							}
+						}
+					}
+				}
+
+				if ((hasReady.length == Index) && MsgSET) {
+					const logMsg = '> ' + Debug('OPTIONS')?.appname + ' : ' + Debug('CONSOLE')?.schedule;
+					global.io.emit('message', logMsg);
+				}
+			});
+		}
+
+		if (Windows && Array.isArray(Windows)) {
+			await (Windows).someAsync(async (Bank) => {
+				const paymentStatus = Bank.Payment || Bank.status;
+				const titleId = Bank.Identifier || Bank.titulo;
+				if (paymentStatus === "paid" || paymentStatus === "pago") {
+					await link.prepare('DELETE FROM scheduling WHERE title=?').run(titleId);
+				}
+			});
+		}
+	});
+
+	if (isSHED.length > 0 && !Boolean(ShedForce)) {
+		await global.io.emit('schedullers', isSHED);
+	}
+
+	return true;
+};
+
+const isAllowedTime = () => {
+	const nowString = DateTime();
+
+	if (!isWeek(nowString)) {
+		return false;
+	}
+
+	const currentHour = parseInt(nowString.split(" ")[1].split(":")[0], 10);
+
+	return isShift(currentHour);
+};
+
+const GetSchedule = async () => {
+	try {
+		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot)) {
+			return;
+		}
+
+		let Check = 0;
+		let isPaid = 0;
+		let isLock = 0;
+		let isUnLock = 0;
+		let isDue = 0;
+
+		const mkAuthCache = new Map();
+
+		const DataBase = await Debug('SCHEDULING', 'TITLE', 'MULTIPLE');
+
+		if (DataBase && DataBase.length >= 1) {
+			for (const Target of DataBase) {
+				const Local = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(Target);
+				if (!Local) {
+					continue;
+				}
+
+				const Rebase = await MkAuth('all', Target, 'list');
+				mkAuthCache.set(Target, Rebase);
+
+				if (Rebase != undefined && Rebase.Status == undefined) {
+					const Bank = await Object.assign({}, Rebase)[0];
+					if (!Bank) {
+						continue;
+					}
+
+					const CheckVal = (Bank.unLock !== Local.unlock && Boolean(Bank.Ready)) ? 1 : 0;
+					const IsPaidVal = (Bank.Payment !== Local.status && Boolean(Bank.Ready)) ? 1 : 0;
+
+					if (IsPaidVal >= 1 && Local.process !== "success" && Bank.Payment === "paid") {
+						await link.prepare('UPDATE scheduling SET status=?, cash=?, gateway=?, unlock=? WHERE title=?')
+							.run(Bank.Payment, Bank.Cash, Bank.Gateway, Bank.unLock, Target);
+					} else if (CheckVal >= 1 && Local.process !== "wait" && Local.process !== "success") {
+						if (Bank.unLock === 'false' && Local.process !== "unlock") {
+							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Target);
+						} else if (Bank.unLock === 'true') {
+							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('unlock', 'true', Target);
+						}
+					}
+				} else {
+					await link.prepare('DELETE FROM scheduling WHERE title=?').run(Target);
 				}
 			}
 		}
-		return true;
-	}
-}
 
-const GetSchedule = async () => {
-	if (Boolean(Debug('MKAUTH').module) && Boolean(Debug('MKAUTH').aimbot)) {
-		var Check = 0,
-			IsPaid = 0,
-			isLock = 0,
-			isUnLock = 0,
-			isDue = 0;
-		const DataBase = await Debug('SCHEDULING', 'TITLE', 'MULTIPLE');
-		if (await DataBase.length >= 1) {
-			if (DataBase != undefined) {
-				(await DataBase).someAsync(async (Target) => {
-					var Check = 0,
-						IsPaid = 0;
-					const Local = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(Target);
-					const Rebase = await MkAuth('all', Target, 'list');
-					if (Rebase != undefined && Rebase.Status == undefined) {
-						const Bank = await Object.assign({}, Rebase)[0];
+		const Search = await link.prepare('SELECT * FROM scheduling').all();
+		if (Search && Search.length > 0) {
+			isPaid = Search.filter(Send => Send.process !== "success" && Send.status === "paid").length;
+			isLock = Search.filter(Send => Send.process === "lock" && Send.unlock === "false" && Send.status === "due").length;
+			isUnLock = Search.filter(Send => Send.process === "unlock" && Send.unlock === "true" && Send.status === "due").length;
+			isDue = Search.filter(Send => Send.process === "wait" && Send.status !== "paid").length;
+		}
 
-						Check = await (Object.values(Rebase)).filter(function(Send) {
-							if (Send.unLock != Local.unlock && Boolean(Send.Ready)) {
-								return true;
-							}
-						}).length;
+		const isLoad = {
+			"Paid": isPaid,
+			"Lock": isLock,
+			"unLock": isUnLock,
+			"Due": isDue
+		};
 
-						IsPaid = await (Object.values(Rebase)).filter(function(Send) {
-							if (Send.Payment != Local.status && Boolean(Send.Ready)) {
-								return true;
-							}
-						}).length;
+		let isReturn = Object.assign({}, isLoad);
+		if (typeof isLoad === 'object') {
+			isReturn = JSON.stringify(isReturn, null, 4);
+		}
 
-						if (IsPaid >= 1 && Local.process != "success" && Bank.Payment == "paid") {
-							await link.prepare('UPDATE scheduling SET status=?, cash=?, gateway=?, unlock=? WHERE title=?').run(Bank.Payment, Bank.Cash, Bank.Gateway, Bank.unLock, Target);
-						} else if (Check >= 1 && Local.process != "wait" && Local.process != "success") {
-							if (Bank.unLock == 'false' && Local.process != "unlock") {
-								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Target);
-							} else if (Bank.unLock == 'true') {
-								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('unlock', 'true', Target);
-							}
-						}
-					} else {
-						await link.prepare('DELETE FROM scheduling WHERE title=?').run(Target);
-					}
-				});
-			}
-			const Search = await link.prepare('SELECT * FROM scheduling').all();
-			if (await Search) {
-				if (Search != undefined) {
-					isPaid = await (Object.values(Search)).filter(function(Send) {
-						if (Send.process != "success" && Send.status == "paid") {
-							return true;
-						}
-					}).length;
+		if (Boolean(Debug('OPTIONS').tag) && Boolean(Debug('MKAUTH').aimbot)) {
+			const FrontEnd = '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').shedstatus;
+			console.log(Print.bg.red, Print.fg.white, FrontEnd, Print.reset);
+			console.log(Print.reset, Print.fg.white, isReturn, Print.reset);
+		}
 
-					isLock = await (Object.values(Search)).filter(function(Send) {
-						if (Send.process == "lock" && Send.unlock == "false" && Send.status == "due") {
-							return true;
-						}
-					}).length;
-
-					isUnLock = await (Object.values(Search)).filter(function(Send) {
-						if (Send.process == "unlock" && Send.unlock == "true" && Send.status == "due") {
-							return true;
-						}
-					}).length;
-
-					isDue = await (Object.values(Search)).filter(function(Send) {
-						if (Send.process == "wait" && Send.status != "paid") {
-							return true;
-						}
-					}).length;
-				}
-				isLoad = {
-					"Paid": isPaid,
-					"Lock": isLock,
-					"unLock": isUnLock,
-					"Due": isDue
-				};
-				isReturn = await Object.assign({}, isLoad);
-				if (typeof isLoad === 'object') {
-					isReturn = JSON.stringify(isReturn, null, 4);
-				}
-				if (Boolean(Debug('OPTIONS').tag) && Boolean(Debug('MKAUTH').aimbot)) {
-					FrontEnd = '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').shedstatus;
-					console.log(Print.bg.red, Print.fg.white, FrontEnd, Print.reset);
-					console.log(Print.reset, Print.fg.white, isReturn, Print.reset);
-				}
-			}
-
+		if (DataBase && DataBase.length >= 1) {
 			if (Boolean(Debug('SCHEDULER').onpay) && isPaid >= 1) {
 				const Paid = await link.prepare('SELECT * FROM scheduling WHERE status=? AND NOT process=?').get('paid', 'success');
-				if (await Paid != undefined) {
-					const Resolve = await MkAuth('all', Paid.title, 'list');
+				if (Paid != undefined) {
+					const Resolve = mkAuthCache.get(Paid.title) || await MkAuth('all', Paid.title, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
-					if (await Resolve != undefined) {
-						if (Paid.status == "paid" && Boolean(isBank.Ready)) {
-							Data = {
-								client: Paid.client,
+					if (Resolve != undefined) {
+						if (Paid.status === "paid" && Boolean(isBank.Ready)) {
+							await ProcessMkAuthMessage({
 								user: Paid.user,
+								client: Paid.client,
+								authority: Paid.authority,
 								code: Paid.title,
 								status: "pending",
-								contact: Paid.contact,
+								contact: Paid.contact || "00000000000",
 								reward: Paid.reward,
 								push: '00/00/0000 00:00:00',
 								option: Paid.option,
@@ -870,144 +1319,168 @@ const GetSchedule = async () => {
 								token: Debug('OPTIONS').token,
 								cash: Paid.cash,
 								gateway: Paid.gateway,
-								payment: Paid.status
-							};
-							const isReady = await axios.post("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/send-mkauth", Data);
-							if (await isReady) {
-								await global.io.emit('schedresume', Paid.title);
-								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('success', 'true', Paid.title);
-							}
-						} else {
-							await global.io.emit('schedresume', Paid.title);
-							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('success', 'true', Paid.title);
+								payment: Paid.status,
+								priority: 1
+							});
 						}
+						if (global.io) {
+							global.io.emit('schedresume', {
+								title: Paid.title,
+								status: 'paid'
+							});
+						}
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('success', isBank.unLock || 'true', Paid.title);
 					}
 				}
 			} else if (Boolean(Debug('SCHEDULER').onlock) && isLock >= 1) {
 				const Lock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('lock', 'false');
-				if (await Lock != undefined) {
-					const Resolve = await MkAuth('all', Lock.title, 'list');
+				if (Lock != undefined) {
+					const Resolve = mkAuthCache.get(Lock.title) || await MkAuth('all', Lock.title, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
-					if (await Resolve != undefined) {
-						if (Lock.status != "paid" && Boolean(isBank.Ready)) {
-							Data = {
-								client: Lock.client,
+					if (Resolve != undefined) {
+						if (Lock.status !== "paid" && Boolean(isBank.Ready)) {
+							await ProcessMkAuthMessage({
 								user: Lock.user,
+								client: Lock.client,
+								authority: Lock.authority,
 								code: Lock.title,
 								status: "pending",
-								contact: Lock.contact,
+								contact: Lock.contact || "00000000000",
 								reward: Lock.reward,
 								push: '00/00/0000 00:00:00',
 								option: Lock.option,
 								unlock: Lock.unlock,
 								process: Lock.process,
 								token: Debug('OPTIONS').token,
-								payment: Lock.status
-							};
-							const isReady = await axios.post("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/send-mkauth", Data);
-							if (await isReady) {
-								await global.io.emit('schedresume', Lock.title);
-								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('unlock', 'false', Lock.title);
-							}
-						} else {
-							await global.io.emit('schedresume', Lock.title);
-							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('unlock', 'false', Lock.title);
+								cash: Lock.cash,
+								gateway: Lock.gateway,
+								payment: Lock.status,
+								priority: 2
+							});
 						}
+						if (global.io) {
+							global.io.emit('schedresume', Lock.title);
+						}
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Lock.title);
 					}
 				}
 			} else if (Boolean(Debug('SCHEDULER').onunlock) && isUnLock >= 1) {
 				const UnLock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('unlock', 'true');
-				if (await UnLock != undefined) {
-					const Resolve = await MkAuth('all', UnLock.title, 'list');
+				if (UnLock != undefined) {
+					const Resolve = mkAuthCache.get(UnLock.title) || await MkAuth('all', UnLock.title, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
-					if (await Resolve != undefined) {
-						if (UnLock.status != "paid" && Boolean(isBank.Ready)) {
-							Data = {
-								client: UnLock.client,
+					if (Resolve != undefined) {
+						if (UnLock.status !== "paid" && Boolean(isBank.Ready)) {
+							await ProcessMkAuthMessage({
 								user: UnLock.user,
+								client: UnLock.client,
+								authority: UnLock.authority,
 								code: UnLock.title,
 								status: "pending",
-								contact: UnLock.contact,
+								contact: UnLock.contact || "00000000000",
 								reward: UnLock.reward,
 								push: '00/00/0000 00:00:00',
 								option: UnLock.option,
 								unlock: UnLock.unlock,
 								process: UnLock.process,
 								token: Debug('OPTIONS').token,
-								payment: UnLock.status
-							};
-							const isReady = await axios.post("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/send-mkauth", Data);
-							if (await isReady) {
-								await global.io.emit('schedresume', UnLock.title);
-								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('load', UnLock.unlock, UnLock.title);
-							}
-						} else {
-							await global.io.emit('schedresume', UnLock.title);
-							await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('load', UnLock.unlock, UnLock.title);
+								cash: UnLock.cash,
+								gateway: UnLock.gateway,
+								payment: UnLock.status,
+								priority: 3
+							});
 						}
+						if (global.io) {
+							global.io.emit('schedresume', UnLock.title);
+						}
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('load', UnLock.unlock, UnLock.title);
 					}
 				}
 			} else if ((isWeek(DateTime(0))) && (isShift((DateTime(0).split(" ")[1]).split(":")[0])) || (validPhone(Playground) && Initialize)) {
 				const Due = await link.prepare('SELECT * FROM scheduling WHERE NOT status=? AND process=?').get('paid', 'wait');
-				if (await Due != undefined) {
-					const Resolve = await MkAuth('all', Due.title, 'list');
+				if (Due != undefined) {
+					const Resolve = mkAuthCache.get(Due.title) || await MkAuth('all', Due.title, 'list');
 					const isBank = await Object.assign({}, Resolve)[0];
-					if (await Resolve != undefined) {
+					if (Resolve != undefined) {
 						if (isDue >= 1) {
-							if (Due.process != "load" && Boolean(isBank.Ready)) {
-								Data = {
-									client: Due.client,
+							if (Due.process !== "load" && Boolean(isBank.Ready)) {
+								await ProcessMkAuthMessage({
 									user: Due.user,
+									client: Due.client,
+									authority: Due.authority,
 									code: Due.title,
-									status: "pending",
-									contact: Due.contact,
+									status: Due.status,
+									contact: Due.contact || "00000000000",
 									reward: Due.reward,
 									push: '00/00/0000 00:00:00',
 									option: Due.option,
 									unlock: undefined,
 									process: Due.process,
 									token: Debug('OPTIONS').token,
-									payment: Due.status
-								};
-								const isReady = await axios.post("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/send-mkauth", Data);
-								if (await isReady) {
-									await global.io.emit('schedresume', Due.title);
-									if (isBank.unLock == 'false' && Boolean(Debug('SCHEDULER').onlock)) {
-										await link.prepare('UPDATE scheduling SET process=?, unlock=?  WHERE title=?').run("lock", isBank.unLock, Due.title);
-									} else {
-										await link.prepare('UPDATE scheduling SET process=?, unlock=?  WHERE title=?').run("load", isBank.unLock, Due.title);
-									}
+									cash: Due.cash,
+									gateway: Due.gateway,
+									payment: Due.status,
+									priority: 4
+								});
+								if (global.io) {
+									global.io.emit('schedresume', Due.title);
+								}
+								if (isBank.unLock === 'false' && Boolean(Debug('SCHEDULER').onlock)) {
+									await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("lock", isBank.unLock, Due.title);
+								} else {
+									await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("load", isBank.unLock, Due.title);
 								}
 							} else {
-								await global.io.emit('schedresume', Due.title);
-								await link.prepare('UPDATE scheduling SET process=?, unlock=?  WHERE title=?').run("load", isBank.unLock, Due.title);
+								if (global.io) {
+									global.io.emit('schedresume', Due.title);
+								}
+								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("load", isBank.unLock, Due.title);
 							}
 						} else {
-							await global.io.emit('schedresume', 'true');
+							if (global.io) {
+								global.io.emit('schedresume', 'true');
+							}
 						}
-
 					}
 				}
 			}
-
 		}
+
+		return true;
+
+	} catch (error) {
+		return false;
+	}
+};
+
+// ==========================================
+// CONFIGURAÃ‡ÃƒO DOS CRONS (AJUSTADA)
+// ==========================================
+
+// Sua função ZoneByUF
+async function ZoneByUF(uf) {
+	try {
+		const row = await dbQuery.get("SELECT timezone FROM localzone WHERE uf = ?", [uf]);
+		return row?.timezone || "America/Sao_Paulo";
+	} catch {
+		return "America/Sao_Paulo";
 	}
 }
 
-//Scheduller
+const timezone = await ZoneByUF(Debug('OPTIONS').timezone);
 cron.schedule('*/2 1-2 * * *', async () => {
 	await GetUpdate(WServer, true);
-	await WwjsVersion(false);
+	await WwjsVersion(true);
 }, {
 	scheduled: true,
-	timezone: "America/Sao_Paulo"
+	timezone
 });
 
 cron.schedule('0 0 * * *', async () => {
 	await SetSchedule();
 }, {
 	scheduled: true,
-	timezone: "America/Sao_Paulo"
+	timezone
 });
 
 cron.schedule('30 0 * * *', async () => {
@@ -1016,16 +1489,16 @@ cron.schedule('30 0 * * *', async () => {
 	}
 }, {
 	scheduled: true,
-	timezone: "America/Sao_Paulo"
+	timezone
 });
 
-cron.schedule('*/' + Debug('SCHEDULER').cron + ' 3-23 * * *', async () => {
+cron.schedule(`*/${Debug('SCHEDULER').cron} 0-23 * * *`, async () => {
 	if (!Boolean(Debug('RELEASE').reload)) {
 		await GetSchedule();
 	}
 }, {
 	scheduled: true,
-	timezone: "America/Sao_Paulo"
+	timezone
 });
 
 app.use(express.json({
@@ -1042,540 +1515,636 @@ app.use(express.text({
 app.use("/", express.static(__dirname + "/"))
 
 app.get('/', (req, res) => {
+	isPanelAuthorized = false;
 	res.sendFile('index.html', {
 		root: __dirname
 	});
 });
 
+app.get('/lock-panel', (req, res) => {
+	isPanelAuthorized = false;
+	res.json({
+		status: "locked"
+	});
+});
 
-//Get Date
-function AddZero(num) {
-	return (num >= 0 && num < 10) ? "0" + num : num + "";
+// Get Date (Otimizado)
+function DateTime(Days = 0, Mode) {
+	const date = new Date();
+
+	if (Days !== 0) {
+		const offset = Mode === 'some' ? Days : Mode === 'subtract' ? -Days : 0;
+		date.setDate(date.getDate() + offset);
+	}
+
+	const formatter = new Intl.DateTimeFormat("pt-BR", {
+		timeZone: "America/Sao_Paulo",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false
+	});
+
+	const parts = formatter.formatToParts(date);
+	const p = {};
+	parts.forEach(({
+		type,
+		value
+	}) => {
+		p[type] = value;
+	});
+
+	const hourFixed = p.hour === '24' ? '00' : p.hour;
+
+	return `${p.year}-${p.month}-${p.day} ${hourFixed}:${p.minute}:${p.second}`;
 }
 
-function DateTime(Days = 0, Mode) {
-	isDate = new Date();
-	switch (Mode) {
-		case 'some':
-			isDate.setDate(isDate.getDate() + Days);
-			break;
-		case 'subtract':
-			isDate.setDate(isDate.getDate() - Days);
-			break;
-	}
-	UTC = isDate.getTime() + (isDate.getTimezoneOffset() * 60000);
-	now = new Date(UTC + (3600000 * -3));
-	var strDateTime = [
-		[now.getFullYear(), AddZero(now.getMonth() + 1), AddZero(now.getDate())].join("-"), [AddZero(now.getHours()), AddZero(now.getMinutes()), AddZero(now.getSeconds())].join(":")
-	].join(" ");
-	return strDateTime;
-};
+const GetBoletosFiltrados = async (CPF) => {
+	const cpfLimpo = String(CPF).replace(/\D/g, '');
 
-const MkList = async (FIND, REFINE = "titulos") => {
-	var Server = Debug('MKAUTH').client_link;
-	if (Server == "tunel") {
-		Server = Debug('MKAUTH').tunel;
-	} else if (Server == "domain") {
-		Server = Debug('MKAUTH').domain;
-	}
-	const Authentication = await axios.get('https://' + Server + '/api/', {
-		auth: {
-			username: Debug('MKAUTH').client_id,
-			password: Debug('MKAUTH').client_secret
-		}
-	}).then(response => {
-		return response.data;
-	}).catch(err => {
-		return false;
-	});
-	if (Authentication) {
-		const MkSync = await axios.get('https://' + Server + '/api/titulo/' + REFINE + '/' + FIND, {
-			headers: {
-				'Authorization': 'Bearer ' + Authentication
-			}
-		}).then(response => {
-			if ((typeof response.data !== "object") && ((response.data).slice(-1) != '}')) {
-				return JSON.parse((response.data).substring(0, (response.data).length - 1));
-			} else {
-				return response.data;
-			}
-		}).catch(err => {
-			return false;
-		});
+	const rawData = await MkList(cpfLimpo, "titulos");
 
-		if (await MkSync.mensagem == undefined && await MkSync.error == undefined) {
-			const Keys = Object.keys(await MkSync).length;
-			if (Keys == 0) {
-				return false
-			} else if (Keys <= 2) {
-				return await MkSync.titulos;
-			} else if (Keys >= 3) {
-				return await MkSync;
-			}
-		} else {
-			return false;
-		}
-	}
-};
+	if (!rawData) return false;
 
-function isWeek(Sysdate) {
-	var CountDown = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][new Date(Sysdate).getDay()]
-	switch (CountDown) {
-		case 'sunday':
-			inDay = Debug('SCHEDULER').sunday;
-			break;
-		case 'monday':
-			inDay = Debug('SCHEDULER').monday;
-			break;
-		case 'tuesday':
-			inDay = Debug('SCHEDULER').tuesday;
-			break;
-		case 'wednesday':
-			inDay = Debug('SCHEDULER').wednesday;
-			break;
-		case 'thursday':
-			inDay = Debug('SCHEDULER').thursday;
-			break;
-		case 'friday':
-			inDay = Debug('SCHEDULER').friday;
-			break;
-		case 'saturday':
-			inDay = Debug('SCHEDULER').saturday;
-			break;
-	}
-	if (Boolean(inDay)) {
-		return true;
+	let listaTitulos = [];
+	if (Array.isArray(rawData)) {
+		listaTitulos = rawData;
+	} else if (rawData.titulos && Array.isArray(rawData.titulos)) {
+		listaTitulos = rawData.titulos;
 	} else {
 		return false;
 	}
+
+	if (listaTitulos.length === 0) return false;
+
+	const primeiroTitulo = listaTitulos[0];
+	const clienteNome = primeiroTitulo.nome || primeiroTitulo.nome_res || "Não Informado";
+	const clienteCPF = primeiroTitulo.cpf_cnpj || cpfLimpo;
+
+	const uf = Debug('OPTIONS').timezone || 'SP';
+	const timezoneUser = await getTimezoneByUF(uf);
+
+	const formatter = new Intl.DateTimeFormat('pt-BR', {
+		timeZone: timezoneUser,
+		year: 'numeric',
+		month: 'numeric',
+		day: 'numeric'
+	});
+
+	const parts = formatter.formatToParts(new Date());
+	const anoAtual = Number(parts.find(p => p.type === 'year').value);
+	const mesAtual = Number(parts.find(p => p.type === 'month').value) - 1;
+	const diaAtual = Number(parts.find(p => p.type === 'day').value);
+
+	const hojeZeroHora = new Date(anoAtual, mesAtual, diaAtual);
+	const dataLimite3Meses = new Date(anoAtual, mesAtual - 3, diaAtual);
+
+	const vencidos3Meses = [];
+	let abertoMesCorrente = null;
+
+	for (const item of listaTitulos) {
+		if (!item.datavenc) continue;
+
+		const status = (item.status || "").toLowerCase();
+
+		if (status === 'pago' || status === 'quitado' || status === 'baixado') {
+			continue;
+		}
+
+		const [dataParte] = item.datavenc.split(" ");
+		const [ano, mes, dia] = dataParte.split("-").map(Number);
+		const dataVenc = new Date(ano, mes - 1, dia);
+
+		const boletoFormatado = {
+			titulo: item.titulo,
+			valor: item.valor,
+			vencimento: dataParte,
+			status: item.status,
+		};
+
+		const jaVenceu = dataVenc < hojeZeroHora;
+		const dentroDos3Meses = dataVenc >= dataLimite3Meses;
+
+		if ((status === 'vencido' || jaVenceu) && dentroDos3Meses) {
+			vencidos3Meses.push(boletoFormatado);
+		} else if (
+			status === 'aberto' &&
+			!jaVenceu &&
+			dataVenc.getFullYear() === anoAtual &&
+			dataVenc.getMonth() === mesAtual
+		) {
+			abertoMesCorrente = boletoFormatado;
+		}
+	}
+
+	return {
+		Client: clienteNome,
+		CPF: clienteCPF,
+		Dados: {
+			Due: vencidos3Meses,
+			Open: abertoMesCorrente
+		}
+	};
+};
+
+const MkList = async (FIND, REFINE = "titulos") => {
+	const mkConfig = Debug('MKAUTH');
+	if (!mkConfig) return false;
+
+	const serverMap = {
+		tunel: mkConfig.tunel,
+		domain: mkConfig.domain
+	};
+	const Server = serverMap[mkConfig.client_link] || mkConfig.client_link;
+
+	try {
+		const authResponse = await axios.get(`https://${Server}/api/`, {
+			auth: {
+				username: mkConfig.client_id,
+				password: mkConfig.client_secret
+			}
+		});
+
+		const token = authResponse.data;
+		if (!token) return false;
+
+		const syncResponse = await axios.get(`https://${Server}/api/titulo/${REFINE}/${FIND}`, {
+			headers: {
+				Authorization: `Bearer ${token}`
+			}
+		});
+
+		let data = syncResponse.data;
+
+		if (typeof data === "string") {
+			const trimmedData = data.trim();
+			const jsonString = trimmedData.endsWith('}') ? trimmedData : trimmedData.slice(0, -1);
+			data = JSON.parse(jsonString);
+		}
+
+		if (!data || data.mensagem !== undefined || data.error !== undefined) {
+			return false;
+		}
+
+		const keys = Object.keys(data);
+		if (keys.length === 0) return false;
+		if (keys.length <= 2) return data.titulos;
+
+		return data;
+
+	} catch (err) {
+		return false;
+	}
+};
+
+
+function isWeek(Sysdate) {
+	const weekDays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+	const currentDay = weekDays[new Date(Sysdate).getDay()];
+
+	return Boolean(Debug('SCHEDULER')?.[currentDay]);
 }
 
 const Scheduller = async (DAYS, MODE) => {
-	var Date;
-	if (MODE.toLowerCase() == "now" && DAYS == 0) {
-		Date = [(DateTime(0)).split(" ")[0],
-			[AddZero(0), AddZero(0), AddZero(0)].join(":")
-		].join(" ");
-	} else if (MODE.toLowerCase() == "before") {
-		Date = [(DateTime(DAYS, "subtract")).split(" ")[0],
-			[AddZero(0), AddZero(0), AddZero(0)].join(":")
-		].join(" ");
-	} else if (MODE.toLowerCase() == "later") {
-		Date = [(DateTime(DAYS, "some")).split(" ")[0],
-			[AddZero(0), AddZero(0), AddZero(0)].join(":")
-		].join(" ");
+	let targetDate;
+	const modeLower = MODE ? MODE.toLowerCase() : "";
+
+	if (modeLower === "now" && DAYS === 0) {
+		targetDate = DateTime(0).split(" ")[0];
+	} else if (modeLower === "before") {
+		targetDate = DateTime(DAYS, "some").split(" ")[0];
+	} else if (modeLower === "later") {
+		targetDate = DateTime(DAYS, "subtract").split(" ")[0];
 	}
-	return await MkList(Date);
+	return await MkList(targetDate);
 };
+
 
 function inRange(x, min, max) {
 	return ((x - min) * (x - max) <= 0);
 }
 
 function isShift(Turno) {
-	var Return = false;
-	if (inRange(Turno, AddZero(Debug('SCHEDULER').min), 11)) {
-		if (Boolean(Debug('SCHEDULER').morning)) {
-			Return = true;
-		}
-	} else if (inRange(Turno, 12, 17)) {
-		if (Boolean(Debug('SCHEDULER').afternoon)) {
-			Return = true;
-		}
-	} else if (inRange(Turno, 18, Debug('SCHEDULER').max)) {
-		if (Boolean(Debug('SCHEDULER').night)) {
-			Return = true;
-		}
-	} else {
-		Return = false;
+	const scheduler = Debug('SCHEDULER') || {};
+	const minHour = Number(AddZero(scheduler.min));
+
+	if (inRange(Turno, minHour, 11)) {
+		return Boolean(scheduler.morning);
 	}
-	return Return;
+	if (inRange(Turno, 12, 17)) {
+		return Boolean(scheduler.afternoon);
+	}
+	if (inRange(Turno, 18, scheduler.max)) {
+		return Boolean(scheduler.night);
+	}
+
+	return false;
 }
 
 async function WwjsVersion(GET) {
-	try {
-		const installed = require("whatsapp-web.js/package.json").version;
-		const latest = execSync("npm view whatsapp-web.js version", {
-			encoding: "utf8"
-		}).trim();
+	const appName = Debug('OPTIONS').appname;
+	let isUpdated = false;
 
-		if (installed === latest) {
-			await global.io.emit('Wwjs', true);
-			if (GET) {
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wwjsupdate);
-				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wwjsupdate);
-			}
-		} else {
-			await global.io.emit('Wwjs', false);
-			if (GET) {
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wwjsfail);
-				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wwjsfail);
-			}
-		}
+	try {
+		const pkg = require("whatsapp-web.js/package.json");
+		const installed = pkg ? pkg.version : null;
+		isUpdated = Boolean(installed && installed.length > 0);
 	} catch (err) {
-		await global.io.emit('Wwjs', false);
-		if (GET) {
-			console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wwjsfail);
-			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wwjsfail);
-		}
+		console.error(`> ${appName} : Error checking whatsapp-web.js installation:`, err.message);
+		isUpdated = false;
 	}
+
+	global.io.emit('Wwjs', isUpdated);
+
+	if (!GET) return;
+
+	const consoleConfig = Debug('CONSOLE') || {};
+	const statusMsg = isUpdated ? consoleConfig.wwjsupdate : consoleConfig.wwjsfail;
+	const formattedMessage = `> ${appName} : ${statusMsg}`;
+
+	console.log(formattedMessage);
+	global.io.emit('message', formattedMessage);
 }
 
-
+/// ==================================================
+// Inteligencia Artificial
 // ==================================================
-// 🧠 Inteligência Artificial
-// ==================================================
 
+const DEBUG_TAG = "[DEBUG_LOG]";
+
+const dbQuery = {
+	get: (sql, params = []) => new Promise((res, rej) => db.get(sql, params, (err, row) => err ? rej(err) : res(row))),
+	all: (sql, params = []) => new Promise((res, rej) => db.all(sql, params, (err, rows) => err ? rej(err) : res(rows))),
+	run: (sql, params = []) => new Promise((res, rej) => db.run(sql, params, function(err) {
+		err ? rej(err) : res(this);
+	}))
+};
+
+
+// Gerador de Embedding com fallback local
 async function getEmbedding(text) {
+	if (!text) return null;
+	const {
+		mwsmhost: host,
+		mwsmport: port
+	} = Debug('OPTIONS');
+
 	try {
-		if (!text) return null;
-		const mwsmHost = Debug('OPTIONS').mwsmhost;
-		const mwsmPort = Debug('OPTIONS').mwsmport;
+		console.time(`${DEBUG_TAG} Embedding Time`);
+		const response = await axios.post(`http://${host}:${port}/embed`, {
+			text
+		}, {
+			timeout: 10000
+		});
+		console.timeEnd(`${DEBUG_TAG} Embedding Time`);
 
-		const localResp = await axios.post(
-			`http://${mwsmHost}:${mwsmPort}/embed`, {
-				text
-			}, {
-				timeout: 10000
-			}
-		);
-
-		if (localResp.data?.embedding) return localResp.data.embedding;
-		throw new Error('No embedding returned');
-	} catch {
-		return Array.from(text)
-			.map((ch, i) => ((ch.charCodeAt(0) + i * 13) % 255) / 255)
-			.slice(0, 256);
+		if (response.data?.embedding) return response.data.embedding;
+		throw new Error('No embedding in payload');
+	} catch (err) {
+		console.log(`${DEBUG_TAG} Embedding API offline/error (${err.message}). Using local math fallback.`);
+		return Array.from(text).map((ch, i) => ((ch.charCodeAt(0) + i * 13) % 255) / 255).slice(0, 256);
 	}
 }
 
-// ==================================================
-// 🕒 Timezone e Cumprimentos Dinâmicos
-// ==================================================
 async function getTimezoneByUF(uf) {
-	return new Promise((resolve) => {
-		db.get("SELECT timezone FROM localzone WHERE uf = ?", [uf], (err, row) => {
-			if (err || !row) return resolve("America/Sao_Paulo"); // padrão SP
-			resolve(row.timezone);
-		});
-	});
+	try {
+		const row = await dbQuery.get("SELECT timezone FROM localzone WHERE uf = ?", [uf]);
+		return row?.timezone || "America/Sao_Paulo";
+	} catch {
+		return "America/Sao_Paulo";
+	}
 }
 
 function getGreetingPeriod(timezone) {
 	try {
-		const now = new Date();
-		const localHour = new Intl.DateTimeFormat("pt-BR", {
+		const hour = parseInt(new Intl.DateTimeFormat("pt-BR", {
 			timeZone: timezone,
 			hour: "numeric",
 			hour12: false
-		}).format(now);
-
-		const hour = parseInt(localHour, 10);
-
+		}).format(new Date()), 10);
 		if (hour >= 5 && hour < 12) return "bom dia";
 		if (hour >= 12 && hour < 18) return "boa tarde";
 		if (hour >= 18 && hour < 24) return "boa noite";
-		if (hour >= 0 && hour < 5) return "boa madrugada";
-	} catch (err) {
-		console.error("[ERRO] Falha ao determinar saudação:", err);
+		return "boa madrugada";
+	} catch {
 		return "";
 	}
 }
 
-
-// ==================================================
-// 🔒 Filtro Temático (Palavras-chave no BD)
-// ==================================================
+// Filtro por Palavras-chave
 async function isRelevantQuestion(text) {
-	return new Promise((resolve) => {
-		db.all("SELECT filter FROM keywords", [], (err, rows) => {
-			if (err) {
-				console.error("Keyword filter error:", err.message);
-				return resolve(true); // não bloqueia em erro
-			}
-			if (!rows || rows.length === 0) return resolve(true);
-
-			const keywords = rows.map(r => (r.filter || "").toLowerCase().trim());
-			text = (text || "").toLowerCase().trim();
-			const found = keywords.some(k => text.includes(k));
-			resolve(found);
-		});
-	});
+	try {
+		const rows = await dbQuery.all("SELECT filter FROM keywords");
+		if (!rows?.length) return true;
+		const keywords = rows.map(r => (r.filter || "").toLowerCase().trim());
+		const cleanText = (text || "").toLowerCase().trim();
+		return keywords.some(k => cleanText.includes(k));
+	} catch {
+		return true;
+	}
 }
 
-
-
-// ==================================================
-// 🎯 Lógica Principal da IA
-// ==================================================
+// Lógica Principal
 async function askAI(question) {
-	return new Promise(async (resolve) => {
-		try {
-			const text = (question || "").toLowerCase().trim();
-			const isGreeting = await new Promise((resolveGreet) => {
-				db.all("SELECT word FROM greetings", [], (err, rows) => {
-					if (err || !rows?.length) return resolveGreet(false);
-					const greetings = rows.map(r => (r.word || "").toLowerCase());
-					resolveGreet(greetings.some(g => text.includes(g)));
-				});
-			});
+	const startTime = Date.now();
+	console.log(`${DEBUG_TAG} Start processing question: "${question}"`);
 
-			if (isGreeting) {
-				const uf = Debug('OPTIONS').timezone || 'SP';
-				const tz = await getTimezoneByUF(uf);
-				const turno = getGreetingPeriod(tz);
+	try {
+		const text = (question || "").toLowerCase().trim();
 
-				if (turno) {
-					return resolve(`👋 Olá, ${turno}! Como posso te ajudar com sua conexão de internet?`);
-				} else {
-					return resolve(`👋 Olá! Como posso te ajudar com sua conexão de internet?`);
-				}
-			}
+		// 1. Cumprimentos (Início de conversa)
+		const greetingRows = await dbQuery.all("SELECT word FROM greetings");
+		const greetings = greetingRows?.map(r => (r.word || "").toLowerCase()) || [];
+		if (greetings.some(g => text.includes(g))) {
+			const uf = Debug('OPTIONS').timezone || 'SP';
+			const tz = await getTimezoneByUF(uf);
+			const turno = getGreetingPeriod(tz);
+			console.log(`${DEBUG_TAG} Matched greeting. Total execution: ${Date.now() - startTime}ms`);
+			return turno ? `⚠️ Olá, ${turno}! Como posso te ajudar com sua conexão de internet?` : `⚠️ Olá! Como posso te ajudar com sua conexão de internet?`;
+		}
 
-			const isRelevant = await isRelevantQuestion(text);
-			if (!isRelevant) {
-				console.log(`> ${Debug('OPTIONS').appname} : Brain: Filter → Ignored.`);
-				return resolve("⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.");
-			}
+		// 1.1. Agradecimentos / Encerramento (Fim de conversa)
+		const endRows = await dbQuery.all("SELECT word FROM endofdiscussion");
+		const endWords = endRows?.map(r => (r.word || "").toLowerCase().trim()) || [];
 
-			const aiMode = parseInt(Debug('OPTIONS').aimode);
-			const apiKey = Debug('OPTIONS').keygen;
-			const threshold = parseFloat(Debug('OPTIONS').threshold);
-			const systemPrompt = Debug('OPTIONS').prompt;
-			const aiTimeout = parseInt(Debug('OPTIONS').aitimeout);
-			const appName = Debug('OPTIONS').appname;
-			var Engine = Debug('OPTIONS').engine;
-			var Regedit = null;
+		// Compara a palavra exata ou verifica se a frase é composta basicamente pelo encerramento
+		if (endWords.some(w => text === w || text.startsWith(w + " ") || text.endsWith(" " + w))) {
+			console.log(`${DEBUG_TAG} Matched endofdiscussion word. Total execution: ${Date.now() - startTime}ms`);
+			return "Por nada! Se precisar de mais alguma coisa em relação à sua conexão, estou à disposição. Tenha um ótimo dia! 😊";
+		}
 
-			if ((Engine).toLowerCase() == 'freerouter') {
-				const Levels = Debug('ENGINE', '*', 'ALL').filter(item => item.level == 0);
-				const ActiveModel = Levels.find(item => item.active == 1);
+		// 2. Filtro de Relevância
+		if (!await isRelevantQuestion(text)) {
+			console.log(`${DEBUG_TAG} Question filtered out (not relevant). App: ${Debug('OPTIONS').appname} | Duration: ${Date.now() - startTime}ms`);
+			return "⚠️ Posso ajudar apenas com dúvidas sobre sua conexão de internet e suporte técnico.";
+		}
 
-				if (ActiveModel) {
-					Regedit = ActiveModel;
-				} else if (Levels.length > 0) {
-					const randomIndex = Math.floor(Math.random() * Levels.length);
-					Regedit = Levels[randomIndex];
-				}
+		const {
+			aimode,
+			keygen: apiKey,
+			threshold,
+			prompt: dbPrompt,
+			aitimeout,
+			appname: appName,
+			engine: engineOption
+		} = Debug('OPTIONS');
 
-				if (Regedit) {
-					Engine = Regedit.title
-					Module = Regedit.module
-					Level = Regedit.level
-				}
-			} else {
-				Regedit = await Debug("ENGINE", "*", "DIRECT", Engine);
-				Module = Regedit?.module || null;
-				Level = parseInt(Regedit?.level);
-			}
-			if (!Module) return resolve("⚠️ Indisponível no momento.");
+		const systemPrompt = `${dbPrompt || ''} Responda de forma curta, clara, objetiva e em português.`.trim();
 
-			const qEmbedding = await getEmbedding(question);
-			let bestMatch = null;
-			let bestScore = 0;
+		const aiModeParsed = parseInt(aimode);
+		const thresholdParsed = parseFloat(threshold);
+		const timeoutParsed = parseInt(aitimeout);
 
-			if (aiMode === 0) {
-				console.log(`> ${appName} : Brain: Cloud | Relevance: 0.00`);
-				const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
-				return resolve(aiAnswer);
-			}
+		// Busca flexível do módulo
+		const regedit = await dbQuery.get("SELECT * FROM engine WHERE title = ? OR module = ? OR active = 1", [engineOption, engineOption]);
+		const Module = regedit?.module || engineOption;
 
-			const rows = await Debug('INTELIGENCE', '*', 'ALL');
-			for (const r of rows) {
-				if (!r.embedding) continue;
+		if (!Module) {
+			console.log(`${DEBUG_TAG} Error: Engine module not found for title "${engineOption}"`);
+			return "⚠️ Indisponível no momento.";
+		}
+
+		// Modo 0: Nuvem direta
+		if (aiModeParsed === 0) {
+			console.log(`${DEBUG_TAG} AI Mode 0 (Direct Cloud) selected.`);
+			const answer = await fetchCloudAnswer(question, apiKey, engineOption, Module, systemPrompt + ' Responda de forma curta, clara e em português.', timeoutParsed);
+			console.log(`${DEBUG_TAG} Mode 0 completed in ${Date.now() - startTime}ms`);
+			return answer;
+		}
+
+		// 3. Busca Local Otimizada (Embeddings / Cache)
+		console.time(`${DEBUG_TAG} Local Search Latency`);
+		const qEmbedding = await getEmbedding(question);
+		let bestMatch = null;
+		let bestScore = 0;
+
+		if (qEmbedding) {
+			const qVector = new Float32Array(qEmbedding);
+			const rows = await dbQuery.all("SELECT id, answer, embedding FROM intelligence WHERE embedding IS NOT NULL AND embedding != ''") || [];
+
+			console.log(`${DEBUG_TAG} Comparing vector against ${rows.length} local records`);
+
+			for (let i = 0; i < rows.length; i++) {
+				const r = rows[i];
 				try {
-					const emb = JSON.parse(r.embedding);
-					const score = cosineSimilarity(emb, qEmbedding);
+					const rawEmb = typeof r.embedding === 'string' ? JSON.parse(r.embedding) : r.embedding;
+					if (!Array.isArray(rawEmb) || rawEmb.length !== qVector.length) continue;
+
+					const targetVector = new Float32Array(rawEmb);
+					const score = cosineSimilarityFast(qVector, targetVector);
+
 					if (score > bestScore) {
 						bestScore = score;
 						bestMatch = r;
 					}
 				} catch {}
 			}
-
-			if (bestMatch && bestScore >= threshold) {
-				console.log(`> ${appName} : Brain: Local | Relevance: ${bestScore.toFixed(2)}`);
-				db.run("UPDATE inteligence SET usage_count = usage_count + 1 WHERE id = ?", [bestMatch.id]);
-				return resolve(bestMatch.answer);
-			}
-
-			console.log(`> ${appName} : Brain: Cloud | Relevance: ${bestScore.toFixed(2)}`);
-			const aiAnswer = await fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level);
-
-			if (aiMode === 2 && aiAnswer && !aiAnswer.startsWith("⚠️")) {
-				try {
-					await enforceKnowledgeLimit();
-					const _embedding = await getEmbedding(question);
-					const embeddingStr = _embedding ? JSON.stringify(_embedding) : null;
-
-					db.serialize(() => {
-						db.get("SELECT id FROM inteligence WHERE question = ?", [question], (err, row) => {
-							if (err) return console.error("DB check error:", err.message);
-
-							const sql = row ?
-								"UPDATE inteligence SET answer=?, embedding=?, source=?, usage_count=usage_count+1 WHERE id=?" :
-								"INSERT INTO inteligence (question, answer, embedding, source, usage_count) VALUES (?, ?, ?, ?, 1)";
-
-							const params = row ?
-								[aiAnswer, embeddingStr, "local", row.id] :
-								[question, aiAnswer, embeddingStr, "local"];
-
-							db.run(sql, params, (e) => e && console.error("DB write error:", e.message));
-						});
-					});
-				} catch (e) {
-					console.error("Embedding generation failed:", e?.message || e);
-				}
-			}
-
-			return resolve(aiAnswer);
-		} catch (err) {
-			console.error("IA error:", err.message || err);
-			return resolve("⚠️ Não consegui acessar a inteligência artificial no momento.");
 		}
-	});
-}
+		console.timeEnd(`${DEBUG_TAG} Local Search Latency`);
 
-// ==================================================
-// 🌐 Comunicação com API (OpenRouter) + Limite de Tentativas
-// ==================================================
-async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout, Level = 0) {
-	const tried = [];
-	try {
-		let variants = [];
+		if (bestMatch && bestScore >= thresholdParsed) {
+			console.log(`${DEBUG_TAG} Local match found! ID: ${bestMatch.id} | Score: ${bestScore.toFixed(4)} (Threshold: ${thresholdParsed}) | App: ${appName}`);
+			console.log(`${DEBUG_TAG} Total execution time (Local): ${Date.now() - startTime}ms`);
 
-		if (Engine.toLowerCase() === "freerouter") {
-			variants = await new Promise((resolve) => {
-				db.all("SELECT * FROM engine WHERE level = 0 ORDER BY active DESC, id ASC", [], (err, rows) => {
-					if (err) return resolve([]);
-					resolve(rows);
-				});
-			});
-		} else {
-			variants = await new Promise((resolve) => {
-				db.all("SELECT * FROM engine WHERE title = ? AND level = ? ORDER BY active DESC, id ASC", [Engine, Level], (err, rows) => {
-					if (err) return resolve([]);
-					resolve(rows);
-				});
-			});
+			dbQuery.run("UPDATE intelligence SET usage_count = usage_count + 1 WHERE id = ?", [bestMatch.id]).catch(() => {});
+			return bestMatch.answer;
 		}
 
-		if (!variants.length) throw new Error("⚠️ Erro ao buscar resposta da IA online.");
+		if (aiModeParsed === 1) {
+			console.log(`${DEBUG_TAG} AI Mode 1 (Brain Only) active. No local match found above threshold. Skipping Cloud.`);
+			return "⚠️ Desculpe, não encontrei essa informação em minha base de conhecimento local.";
+		}
 
-		const activeVariant = variants.find(v => v.active === 1);
-		const orderedVariants = activeVariant ?
-			[activeVariant, ...variants.filter(v => v.id !== activeVariant.id)] :
-			variants;
+		console.log(`${DEBUG_TAG} Local match below threshold (${bestScore.toFixed(4)} < ${thresholdParsed}). Forwarding to Cloud.`);
+		console.time(`${DEBUG_TAG} Cloud Answer Latency`);
 
-		const maxAttempts = parseInt(Debug('OPTIONS').aimaxattempts) || 0;
-		let attempts = 0;
+		const aiAnswer = await fetchCloudAnswer(question, apiKey, engineOption, Module, systemPrompt, timeoutParsed);
 
-		for (const variant of orderedVariants) {
-			if (maxAttempts && attempts >= maxAttempts) {
-				console.log(`> ${Debug('OPTIONS').appname} : Brain: Max Attempts (${maxAttempts}) reached.`);
-				break;
-			}
-			attempts++;
+		console.timeEnd(`${DEBUG_TAG} Cloud Answer Latency`);
 
-			tried.push(variant.module);
+		const isErrorResponse = !aiAnswer ||
+			aiAnswer.startsWith("⚠️") ||
+			aiAnswer.toLowerCase().includes("erro ao buscar") ||
+			aiAnswer.toLowerCase().includes("modelo de ia não configurado") ||
+			aiAnswer.toLowerCase().includes("não consegui acessar");
+
+		if (aiModeParsed === 2 && !isErrorResponse) {
 			try {
-				const response = await axios.post(
-					"https://openrouter.ai/api/v1/chat/completions", {
-						model: variant.module,
-						messages: [{
-								role: "system",
-								content: systemPrompt
-							},
-							{
-								role: "user",
-								content: question
-							}
-						]
-					}, {
-						headers: {
-							Authorization: `Bearer ${apiKey}`,
-							"Content-Type": "application/json"
-						},
-						timeout: aiTimeout
-					}
-				);
+				await enforceKnowledgeLimit();
+				const _embedding = qEmbedding || await getEmbedding(question);
+				const embeddingStr = _embedding ? JSON.stringify(_embedding) : null;
 
-				const aiAnswer =
-					response.data?.choices?.[0]?.message?.content?.trim() ||
-					"Desculpe, não consegui entender sua solicitação.";
+				const existingRow = await dbQuery.get("SELECT id FROM intelligence WHERE question = ?", [question]);
+				if (existingRow) {
+					await dbQuery.run("UPDATE intelligence SET answer=?, embedding=?, source=?, usage_count=usage_count+1 WHERE id=?", [aiAnswer, embeddingStr, "local", existingRow.id]);
+					console.log(`${DEBUG_TAG} Memory updated for existing question (ID: ${existingRow.id})`);
+				} else {
+					await dbQuery.run("INSERT INTO intelligence (question, answer, embedding, source, usage_count) VALUES (?, ?, ?, ?, 1)", [question, aiAnswer, embeddingStr, "local"]);
+					console.log(`${DEBUG_TAG} New question and answer saved to local cache`);
 
-				db.run("UPDATE engine SET active = 0 WHERE title = ?", [variant.title]);
-				db.run("UPDATE engine SET active = 1 WHERE id = ?", [variant.id]);
-
-				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → ATIVA`);
-				return aiAnswer.replace(/\s+/g, " ").trim();
-			} catch (err) {
-				console.log(`> ${Debug('OPTIONS').appname} : AskAI: ${variant.title} ${variant.variant} → INATIVA`);
-				db.run("UPDATE engine SET active = 0 WHERE id = ?", [variant.id]);
-				continue;
+					broadcastPanelStats();
+				}
+			} catch (e) {
+				console.error(`${DEBUG_TAG} Embedding save failed:`, e?.message);
 			}
+		} else if (isErrorResponse) {
+			console.log(`${DEBUG_TAG} Ignored saving to local memory: Response contains error or warning indicator.`);
 		}
 
-		return "⚠️ Erro ao buscar resposta da IA online.";
-	} catch {
+		console.log(`${DEBUG_TAG} Total execution time (Cloud/Hybrid): ${Date.now() - startTime}ms`);
+		return aiAnswer;
+
+	} catch (err) {
+		console.error(`${DEBUG_TAG} IA Critical Error (${Date.now() - startTime}ms):`, err.message || err);
+		return "⚠️ Não consegui acessar a inteligência artificial no momento.";
+	}
+}
+
+async function fetchCloudAnswer(question, apiKey, Engine, Module, systemPrompt, aiTimeout) {
+	try {
+		const targetModel = Module || Engine;
+		if (!targetModel) return "⚠️ Modelo de IA não configurado.";
+
+		console.log(`${DEBUG_TAG} Calling OpenRouter API | Model: ${targetModel} | Timeout: ${aiTimeout}ms`);
+
+		const response = await axios.post(
+			"https://openrouter.ai/api/v1/chat/completions", {
+				model: targetModel,
+				messages: [{
+						role: "system",
+						content: systemPrompt
+					},
+					{
+						role: "user",
+						content: question
+					}
+				]
+			}, {
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					"Content-Type": "application/json"
+				},
+				timeout: aiTimeout
+			}
+		);
+
+		const aiAnswer = response.data?.choices?.[0]?.message?.content?.trim() || "Desculpe, não consegui entender.";
+		return aiAnswer.replace(/\s+/g, " ").trim();
+
+	} catch (err) {
+		console.error(`${DEBUG_TAG} OpenRouter Cloud Error:`, err?.response?.data || err?.message || err);
 		return "⚠️ Erro ao buscar resposta da IA online.";
 	}
 }
 
-// ==================================================
-// 📊 Similaridade Vetorial
-// ==================================================
-function cosineSimilarity(vecA, vecB) {
+function cosineSimilarityFast(vecA, vecB) {
 	if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
-	let dot = 0,
-		normA = 0,
-		normB = 0;
-	for (let i = 0; i < vecA.length; i++) {
-		dot += vecA[i] * vecB[i];
-		normA += vecA[i] * vecA[i];
-		normB += vecB[i] * vecB[i];
+
+	let dot = 0.0;
+	let normA = 0.0;
+	let normB = 0.0;
+
+	const len = vecA.length;
+	for (let i = 0; i < len; i++) {
+		const valA = vecA[i];
+		const valB = vecB[i];
+		dot += valA * valB;
+		normA += valA * valA;
+		normB += valB * valB;
 	}
+
 	return normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;
 }
 
-// ==================================================
-// 🧹 Limpeza Dinâmica e Inteligente do Conhecimento
-// ==================================================
 async function enforceKnowledgeLimit() {
 	try {
 		const maxKnowledge = parseInt(Debug("OPTIONS").maxknowledge) || 1000;
-		if (!maxKnowledge || maxKnowledge < 100) return;
+		const row = await dbQuery.get("SELECT COUNT(*) as total FROM intelligence");
+		const total = row?.total || 0;
+		if (total <= maxKnowledge) return;
 
-		db.all("SELECT COUNT(*) as total FROM inteligence", async (err, rows) => {
-			if (err) return console.error("DB count error:", err.message);
-			const total = rows[0]?.total || 0;
-			if (total <= maxKnowledge) return;
-
-			const excess = total - maxKnowledge;
-			db.run(
-				`DELETE FROM inteligence
-                 WHERE id IN (
-                     SELECT id FROM inteligence
-                     ORDER BY usage_count ASC, id ASC
-                     LIMIT ?
-                 )`,
-				[excess],
-				function(delErr) {
-					if (delErr) console.error("Cleanup error:", delErr.message);
-					else console.log(`✅ ${this.changes} registros antigos removidos.`);
-				}
-			);
-		});
+		const excess = total - maxKnowledge;
+		console.log(`${DEBUG_TAG} Knowledge limit reached (${total}/${maxKnowledge}). Purging ${excess} oldest entries.`);
+		await dbQuery.run(`DELETE FROM intelligence WHERE id IN (SELECT id FROM intelligence ORDER BY usage_count ASC, id ASC LIMIT ?)`, [excess]);
 	} catch (err) {
-		console.error("Erro no enforceKnowledgeLimit:", err.message);
+		console.error(`${DEBUG_TAG} Error in enforceKnowledgeLimit:`, err.message);
 	}
 }
 
-// ==================================================
-// 🔹 Embedding Local (Backup Seguro)
-// ==================================================
-async function getLocalEmbedding(text) {
-	return Array.from(text).map((c, i) => ((c.charCodeAt(0) + i * 7) % 255) / 255);
+async function Openrout(apiKey) {
+	try {
+		const [exchangeRes, modelsRes, creditsRes] = await Promise.all([
+			axios.get('https://api.exchangerate-api.com/v4/latest/USD'),
+			axios.get('https://openrouter.ai/api/v1/models', {
+				headers: {
+					'Authorization': `Bearer ${apiKey}`
+				}
+			}),
+			axios.get('https://openrouter.ai/api/v1/auth/key', {
+				headers: {
+					'Authorization': `Bearer ${apiKey}`
+				}
+			})
+		]);
+
+		const exchangeRate = exchangeRes.data?.rates?.BRL || 5.22;
+		const openRouterModels = modelsRes.data?.data || [];
+		const keyData = creditsRes.data?.data || {};
+
+		const dbRows = await new Promise((resolve, reject) => {
+			db.all("SELECT id, title, module, active FROM engine", [], (err, rows) => {
+				if (err) reject(err);
+				else resolve(rows || []);
+			});
+		});
+
+		const formattedModels = dbRows.map(row => {
+			const apiModel = openRouterModels.find(m => m.id === row.module) || {};
+			const promptPrice = parseFloat(apiModel.pricing?.prompt || 0) * 1000000;
+			const completionPrice = parseFloat(apiModel.pricing?.completion || 0) * 1000000;
+
+			return {
+				db_id: row.id,
+				title: row.title,
+				id: row.module,
+				name: apiModel.name || row.title,
+				active: row.active,
+				input_cost_brl: (promptPrice * exchangeRate).toFixed(2).replace('.', ','),
+				output_cost_brl: (completionPrice * exchangeRate).toFixed(2).replace('.', ','),
+				input_cost_usd: promptPrice.toFixed(4),
+				output_cost_usd: completionPrice.toFixed(4)
+			};
+		});
+
+		// 4. Formata o saldo e gasto financeiro também com 2 casas decimais (ex: "52,22")
+		const balanceUsd = keyData.limit ? (keyData.limit - keyData.usage) : 0;
+		const spentUsd = keyData.usage || 0;
+
+		return {
+			currency: 'BRL',
+			exchange_rate: exchangeRate,
+			financial: {
+				balance_brl: (balanceUsd * exchangeRate).toFixed(2).replace('.', ','),
+				total_spent_brl: (spentUsd * exchangeRate).toFixed(2).replace('.', ','),
+				balance_usd: balanceUsd,
+				total_spent_usd: spentUsd
+			},
+			usage: {
+				total_requests: keyData.is_free_tier ? 0 : 1,
+				tokens_sent: 0,
+				tokens_received: 0,
+				tokens_total: 0
+			},
+			models: formattedModels
+		};
+
+	} catch (error) {
+		console.error("Erro na execução do Openrout:", error.message);
+		return null;
+	}
 }
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1587,623 +2156,655 @@ delay(0).then(async function() {
 });
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//Search MkAUth API
+
 const MkAuth = async (UID, FIND, EXT = 'titulos', TYPE = 'titulo', MODE = true) => {
-	var SEARCH, LIST, STATUS, PUSH = [],
-		JSON = [],
-		Json = undefined,
-		JDebug = undefined,
-		Owner = Boolean(Debug('MKAUTH').owner),
-		Jump;
-	var Server = Debug('MKAUTH').client_link;
+	const mkConfig = Debug('MKAUTH');
+	if (!mkConfig) return false;
 
-	if (Server == "tunel") {
-		Server = Debug('MKAUTH').tunel;
-	} else if (Server == "domain") {
-		Server = Debug('MKAUTH').domain;
-	}
-	switch (FIND) {
-		case 'open':
-			FIND = 'aberto';
-			break;
-		case 'paid':
-			FIND = 'pago';
-			break;
-		case 'due':
-			FIND = 'vencido';
-			break;
-		case 'cancel':
-			FIND = 'cancelado';
-			break;
-	}
-	if (EXT == "list") {
-		EXT = "listagem";
-	}
-	const Authentication = await axios.get('https://' + Server + '/api/', {
-		auth: {
-			username: Debug('MKAUTH').client_id,
-			password: Debug('MKAUTH').client_secret
-		}
-	}).then(response => {
-		return response.data;
-	}).catch(err => {
-		return false;
-	});
-	if (Authentication) {
-		const MkSync = await axios.get('https://' + Server + '/api/' + TYPE + '/' + EXT + '/' + UID, {
-			headers: {
-				'Authorization': 'Bearer ' + Authentication
+	const Owner = Boolean(mkConfig.owner);
+
+	const serverMap = {
+		tunel: mkConfig.tunel,
+		domain: mkConfig.domain
+	};
+	const Server = serverMap[mkConfig.client_link] || mkConfig.client_link;
+
+	const findMap = {
+		open: 'aberto',
+		paid: 'pago',
+		due: 'vencido',
+		cancel: 'cancelado'
+	};
+	const targetFind = findMap[FIND] || FIND;
+	const targetExt = EXT === "list" ? "listagem" : EXT;
+
+	try {
+		const authResponse = await axios.get(`https://${Server}/api/`, {
+			auth: {
+				username: mkConfig.client_id,
+				password: mkConfig.client_secret
 			}
-		}).then(response => {
-			if ((typeof response.data !== "object") && ((response.data).slice(-1) != '}')) {
-				return JSON.parse((response.data).substring(0, (response.data).length - 1));
-			} else {
-				return response.data;
-			}
-		}).catch(err => {
-			return false;
 		});
-		if (await MkSync.mensagem == undefined && await MkSync.error == undefined) {
-			const SEARCH = await MkSync;
-			const Keys = Object.keys(SEARCH).length;
-			if (Keys == 0) {
-				Syncron = undefined
-			} else if (Keys <= 2) {
-				Syncron = await SEARCH.titulos;
-			} else if (Keys >= 3) {
-				Syncron = await SEARCH;
+
+		const Authentication = authResponse.data;
+		if (!Authentication) return false;
+
+		const syncResponse = await axios.get(`https://${Server}/api/${TYPE}/${targetExt}/${UID}`, {
+			headers: {
+				Authorization: `Bearer ${Authentication}`
 			}
-			if (Syncron != undefined) {
-				(Syncron).someAsync(async (Send) => {
-					if (EXT == 'titulos') {
-						if ((Send.titulo == FIND.replace(/^0+/, '') || parseInt(Send.titulo) == parseInt(FIND)) || Send.linhadig == FIND) {
-							var Bolix = '';
-							if (Send.linhadig == undefined || Send.linhadig == null || Send.linhadig == "") {
-								Send.linhadig = '';
-								Json_Bar = "false";
-							} else {
-								switch (Debug('MKAUTH').mode) {
-									case 'v1':
-										Bolix = "http://" + Debug('MKAUTH').domain + "/boleto/boleto.hhvm?titulo=" + Send.uuid;
-										break;
-									case 'v2':
-										Bolix = "http://" + Debug('MKAUTH').domain + "/boleto/boleto.hhvm?titulo=" + Send.titulo + "&contrato=" + Send.login;
-										break;
-								}
+		});
 
-								Json_Bar = "true";
-							}
+		let rawData = syncResponse.data;
+		if (typeof rawData === "string") {
+			const trimmed = rawData.trim();
+			rawData = JSON.parse(trimmed.endsWith('}') ? trimmed : trimmed.slice(0, -1));
+		}
 
-							if (Send.pix == undefined || Send.pix == null || Send.pix == "") {
-								Send.pix = '';
-								Json_Pix = "false";
-							} else {
-
-								Json_Pix = "true";
-							}
-							if (Send.pix_qr == undefined || Send.pix_qr == null || Send.pix_qr == "") {
-								Send.pix_qr = 'base64,';
-								Json_QR = "false";
-							} else {
-
-								Json_QR = "true";
-							}
-
-							if (Send.pix_link == undefined || Send.pix_link == null || Send.pix_link == "") {
-								Send.pix_link = '';
-								Json_Link = "false";
-							} else {
-								Json_Link = "true";
-							}
-							var SEND = [];
-							if (Boolean(Debug('MKAUTH').bar)) {
-								SEND.push(Send.linhadig);
-							}
-
-							if (Boolean(Debug('MKAUTH').pix)) {
-								SEND.push(Send.pix);
-							}
-
-							if (Boolean(Debug('MKAUTH').qrpix)) {
-								SEND.push(Send.pix_qr);
-							}
-
-							if (Boolean(Debug('MKAUTH').qrlink)) {
-								SEND.push(Send.pix_link);
-							}
-
-							if (Boolean(Debug('MKAUTH').pdf)) {
-								SEND.push(Send.uuid);
-							}
-							if (SEND.length >= 1) {
-								if (SEND.some(Row => Row == '')) {
-									STATUS = "Null";
-								} else {
-									STATUS = Send.status;
-								}
-								Json = {
-									"Status": STATUS,
-									"ID": Send.titulo,
-									"Name": Owner ? Send.nome_res : Send.nome,
-									"Payments": [{
-											"value": Send.linhadig,
-											"caption": "Bar",
-											"status": Json_Bar
-										},
-										{
-											"value": Send.pix,
-											"caption": "Pix",
-											"status": Json_Pix
-										},
-										{
-											"value": Send.pix_qr.split("base64,")[1],
-											"caption": "QRCode",
-											"status": Json_QR
-										},
-										{
-											"value": Send.pix_link,
-											"caption": "Link",
-											"status": Json_Link
-										},
-										{
-											"value": Bolix,
-											"caption": "Boleto",
-											"status": Json_Bar
-										}
-									]
-								};
-							}
-						}
-					}
-
-					if (EXT == 'listagem' || EXT == 'list') {
-						LIST = [FIND];
-						if (FIND == 'all') {
-							LIST = [Send.status];
-						}
-
-						if (UID == "all") {
-							Jump = true;
-						} else {
-							if (parseInt(UID) <= 9 && parseInt(UID.length) == 1) {
-								UID = "0" + UID;
-							}
-
-							Jump = (Send.datavenc).includes(((DateTime()).split(" ")[0]).split("-")[0] + "-" + UID + "-");
-							if ((UID).replace(/[^0-9\\.]+/g, '').length > 4) {
-								Jump = (Send.datavenc).includes(UID + "-");
-							}
-						}
-						if (Jump && LIST.some(Row => (Send.status.includes(Row) || Send.login.includes(Row) || Send.titulo.includes(Row))) && Send.cli_ativado == 's' && Send.status != 'cancelado') {
-							switch (Send.status) {
-								case 'aberto':
-									Send.status = 'open';
-									break;
-								case 'pago':
-									Send.status = 'paid';
-									break;
-								case 'vencido':
-									Send.status = 'due';
-									break;
-								case 'cancelado':
-									Send.status = 'cancel';
-									break;
-							}
-							switch (Send.bloqueado) {
-								case 'sim':
-									Send.bloqueado = 'false';
-									break;
-								case 'nao':
-									Send.bloqueado = 'true';
-									break;
-							}
-
-							switch (Send.cli_ativado) {
-								case 's':
-									Send.cli_ativado = 'true';
-									break;
-								case 'n':
-									Send.cli_ativado = 'false';
-									break;
-							}
-
-							switch (Send.zap) {
-								case 'sim':
-									Send.zap = 'true';
-									break;
-								case 'nao':
-									Send.zap = 'false';
-									break;
-							}
-
-							if (Send.formapag != "dinheiro" && Send.formapag != undefined) {
-								Send.formapag = "banco"
-							}
-							if (((Send.datavenc).split(" ")[0]) == (DateTime()).split(" ")[0] && (Send.status) != 'paid') {
-								Send.status = 'open'
-							}
-							if (Send.celular != undefined) {
-								Send.celular = (Send.celular).replace(/[^0-9\\.]+/g, '');
-							}
-							Json = {
-								"Order": (new Date(Send.datavenc)).getDate(),
-								"Identifier": Send.titulo,
-								"Client": Owner ? Send.nome_res : Send.nome,
-								"Reward": Send.datavenc,
-								"Payment": Send.status,
-								"Connect": Send.login,
-								"Contact": Send.celular,
-								"Working": Send.cli_ativado,
-								"unLock": Send.bloqueado,
-								"LowSpeed": Send.dias_corte,
-								"Ready": Send.zap,
-								"Cash": Send.valorpag,
-								"Gateway": Send.formapag
-							};
-							PUSH.push(Json);
-							Json = (PUSH).sort(function(a, b) {
-								var Nome = a.Client.localeCompare(b.Client);
-								var Ordem = parseFloat(a.Order) - parseFloat(b.Order);
-								return Ordem || Nome;
-							});
-
-						}
-					}
+		if (!rawData || rawData.mensagem !== undefined || rawData.error !== undefined) {
+			if (targetExt === 'titulos') {
+				Terminal({
+					"MkAuth": "Cannot Find the Data > uid"
+				});
+			} else {
+				Terminal({
+					'MkAuth': 'Cannot Find the Data',
+					'Request': UID,
+					'Find': FIND
 				});
 			}
-			if (EXT == 'titulos') {
-				if (Json == undefined) {
-					Json = {
-						"Status": "Error"
-					};
-					JDebug = {
-						"MkAuth": "Cannot Find the Data > find"
-					};
-
-					Terminal(JDebug);
-				} else {
-					switch (Json.Status) {
-						case 'aberto':
-							Json.Status = 'open';
-							break;
-						case 'pago':
-							Json.Status = 'paid';
-							break;
-						case 'vencido':
-							Json.Status = 'due';
-							break;
-						case 'cancelado':
-							Json.Status = 'cancel';
-							break;
-					}
-					JDebug = {
-						"Payment": Json.Status,
-						"Client": Json.Name,
-						"MkAuth": [{
-								"Module": "Bar",
-								"Available": Json["Payments"][0].status,
-								"Allowed": "" + Debug('MKAUTH').bar + ""
-
-							},
-							{
-								"Module": "Pix",
-								"Available": Json["Payments"][1].status,
-								"Allowed": "" + Debug('MKAUTH').pix + ""
-							},
-							{
-								"Module": "QRC",
-								"Available": Json["Payments"][2].status,
-								"Allowed": "" + Debug('MKAUTH').qrpix + ""
-							},
-							{
-								"Module": "QRL",
-								"Available": Json["Payments"][3].status,
-								"Allowed": "" + Debug('MKAUTH').qrlink + ""
-							},
-							{
-								"Module": "PDF",
-								"Available": Json["Payments"][4].status,
-								"Allowed": "" + Debug('MKAUTH').pdf + ""
-							}
-						]
-					}
-					Terminal(JDebug);
-				}
-				return Json;
-			}
-			if (EXT == 'listagem' || EXT == 'list') {
-				if (Json == undefined) {
-					Json = {
-						"Status": "Error"
-					};
-				} else {
-					(Json).some(function(Send, index) {
-						isJson = {
-							"Order": (index + 1),
-							"Identifier": Send.Identifier,
-							"Client": Send.Client,
-							"Reward": Send.Reward,
-							"Payment": Send.Payment,
-							"Connect": Send.Connect,
-							"Contact": Send.Contact,
-							"unLock": Send.unLock,
-							"Working": Send.Working,
-							"LowSpeed": Send.LowSpeed,
-							"Ready": Send.Ready,
-							"Cash": Send.Cash,
-							"Gateway": Send.Gateway
-						};
-						JSON.push(isJson);
-						Json = JSON;
-					});
-					Terminal(Json);
-				}
-				if (Json.Status == "Error") {
-					return false;
-				}
-				return Json;
-			}
-		} else {
-			if (await MkSync.mensagem != undefined || await MkSync.error != undefined) {
-				if (EXT == 'titulos') {
-					JDebug = {
-						"MkAuth": "Cannot Find the Data > uid",
-					};
-					Terminal(JDebug);
-					return false;
-				}
-
-				if (EXT == 'listagem' || EXT == 'list') {
-					JDebug = {
-						'MkAuth': 'Cannot Find the Data',
-						'Request': UID,
-						'Find': FIND
-					};
-					Terminal(JDebug);
-					return false;
-				}
-			}
+			return false;
 		}
-	} else {
+
+		const keys = Object.keys(rawData).length;
+		let syncron;
+
+		if (keys === 0) {
+			syncron = undefined;
+		} else if (keys <= 2) {
+			syncron = rawData.titulos;
+		} else {
+			syncron = rawData;
+		}
+
+		if (!syncron || !Array.isArray(syncron)) {
+			if (targetExt === 'titulos') {
+				Terminal({
+					"MkAuth": "Cannot Find the Data > find"
+				});
+				return {
+					"Status": "Error"
+				};
+			}
+			return false;
+		}
+
+		const statusTranslate = {
+			aberto: 'open',
+			pago: 'paid',
+			vencido: 'due',
+			cancelado: 'cancel'
+		};
+		const boolTranslate = (val, trueVal = 'sim') => (val === trueVal ? 'true' : 'false');
+
+		if (targetExt === 'titulos') {
+			const cleanFind = String(targetFind).replace(/^0+/, '');
+			const match = syncron.find(Send =>
+				Send.titulo == cleanFind ||
+				parseInt(Send.titulo) === parseInt(targetFind) ||
+				Send.linhadig === targetFind
+			);
+
+			if (!match) {
+				Terminal({
+					"MkAuth": "Cannot Find the Data > find"
+				});
+				return {
+					"Status": "Error"
+				};
+			}
+
+			let Bolix = '';
+			let Json_Bar = "false";
+			let Json_Pix = "false";
+			let Json_QR = "false";
+			let Json_Link = "false";
+
+			if (match.linhadig) {
+				Json_Bar = "true";
+				Bolix = mkConfig.mode === 'v1' ?
+					`http://${mkConfig.domain}/boleto/boleto.hhvm?titulo=${match.uuid}` :
+					`http://${mkConfig.domain}/boleto/boleto.hhvm?titulo=${match.titulo}&contrato=${match.login}`;
+			} else {
+				match.linhadig = '';
+			}
+
+			if (match.pix) Json_Pix = "true";
+			else match.pix = '';
+
+			if (match.pix_qr) Json_QR = "true";
+			else match.pix_qr = 'base64,';
+
+			if (match.pix_link) Json_Link = "true";
+			else match.pix_link = '';
+
+			const SEND = [];
+			if (Boolean(mkConfig.bar)) SEND.push(match.linhadig);
+			if (Boolean(mkConfig.pix)) SEND.push(match.pix);
+			if (Boolean(mkConfig.qrpix)) SEND.push(match.pix_qr);
+			if (Boolean(mkConfig.qrlink)) SEND.push(match.pix_link);
+			if (Boolean(mkConfig.pdf)) SEND.push(match.uuid);
+
+			if (SEND.length === 0) return {
+				"Status": "Error"
+			};
+
+			const STATUS = SEND.some(Row => Row === '') ? "Null" : match.status;
+			const qrParts = match.pix_qr.split("base64,");
+
+			const fullName = match.nome;
+			const shortName = match.nome_res || match.nome;
+
+			const Json = {
+				"Status": statusTranslate[STATUS] || STATUS,
+				"ID": match.titulo,
+				"Name": Owner ? shortName : fullName,
+				"Authority": fullName,
+				"Payments": [{
+						"value": match.linhadig,
+						"caption": "Bar",
+						"status": Json_Bar
+					},
+					{
+						"value": match.pix,
+						"caption": "Pix",
+						"status": Json_Pix
+					},
+					{
+						"value": qrParts[1] !== undefined ? qrParts[1] : qrParts[0],
+						"caption": "QRCode",
+						"status": Json_QR
+					},
+					{
+						"value": match.pix_link,
+						"caption": "Link",
+						"status": Json_Link
+					},
+					{
+						"value": Bolix,
+						"caption": "Boleto",
+						"status": Json_Bar
+					}
+				]
+			};
+
+			Terminal({
+				"Payment": Json.Status,
+				"Client": Json.Name,
+				"Authority": Json.Authority,
+				"MkAuth": [{
+						"Module": "Bar",
+						"Available": Json.Payments[0].status,
+						"Allowed": `${mkConfig.bar}`
+					},
+					{
+						"Module": "Pix",
+						"Available": Json.Payments[1].status,
+						"Allowed": `${mkConfig.pix}`
+					},
+					{
+						"Module": "QRC",
+						"Available": Json.Payments[2].status,
+						"Allowed": `${mkConfig.qrpix}`
+					},
+					{
+						"Module": "QRL",
+						"Available": Json.Payments[3].status,
+						"Allowed": `${mkConfig.qrlink}`
+					},
+					{
+						"Module": "PDF",
+						"Available": Json.Payments[4].status,
+						"Allowed": `${mkConfig.pdf}`
+					}
+				]
+			});
+
+			return Json;
+		}
+
+		if (targetExt === 'listagem') {
+			const push = [];
+			const todayDate = DateTime().split(" ")[0];
+			const isAllUID = UID === "all";
+
+			let formattedUID = UID;
+			if (!isAllUID && parseInt(UID) <= 9 && String(UID).length === 1) {
+				formattedUID = "0" + UID;
+			}
+
+			const currentYearMonth = `${todayDate.split("-")[0]}-${formattedUID}-`;
+			const isLongUID = !isAllUID && String(UID).replace(/[^0-9.]+/g, '').length > 4;
+
+			for (const Send of syncron) {
+				if (Send.cli_ativado !== 's' || Send.status === 'cancelado') continue;
+
+				let list = [targetFind];
+				if (targetFind === 'all') list = [Send.status];
+
+				let jump = isAllUID;
+				if (!jump && Send.datavenc) {
+					jump = isLongUID ? Send.datavenc.includes(UID + "-") : Send.datavenc.includes(currentYearMonth);
+				}
+
+				const matchesFilter = list.some(row => Send.status.includes(row) || Send.login.includes(row) || Send.titulo.includes(row));
+				if (!jump || !matchesFilter) continue;
+
+				let statusClean = statusTranslate[Send.status] || Send.status;
+				if (Send.datavenc && Send.datavenc.split(" ")[0] === todayDate && statusClean !== 'paid') {
+					statusClean = 'open';
+				}
+
+				const celularClean = Send.celular ? Send.celular.replace(/[^0-9.]+/g, '') : undefined;
+				const formapagClean = Send.formapag && Send.formapag !== "dinheiro" ? "banco" : Send.formapag;
+
+				const fullName = Send.nome;
+				const shortName = Send.nome_res || Send.nome;
+
+				push.push({
+					"Order": new Date(Send.datavenc).getDate(),
+					"Identifier": Send.titulo,
+					"Client": Owner ? shortName : fullName,
+					"Authority": fullName,
+					"Reward": Send.datavenc,
+					"Payment": statusClean,
+					"Connect": Send.login,
+					"Contact": celularClean,
+					"Working": boolTranslate(Send.cli_ativado, 's'),
+					"unLock": boolTranslate(Send.bloqueado, 'nao'),
+					"LowSpeed": Send.dias_corte,
+					"Ready": boolTranslate(Send.zap, 'sim'),
+					"Cash": Send.valorpag,
+					"Gateway": formapagClean
+				});
+			}
+
+			if (push.length === 0) {
+				Terminal({
+					"Status": "Error"
+				});
+				return false;
+			}
+
+			push.sort((a, b) => a.Client.localeCompare(b.Client) || parseFloat(a.Order) - parseFloat(b.Order));
+
+			const JSON_FINAL = push.map((Send, index) => ({
+				"Order": index + 1,
+				...Send
+			}));
+
+			Terminal(JSON_FINAL);
+			return JSON_FINAL;
+		}
+
+		return false;
+	} catch (err) {
 		return false;
 	}
 };
-//Check is Json
+
+// Check is Json
 function testJSON(text) {
-	text = text.toString().replace(/"/g, "").replace(/'/g, "");
-	text = text.toString().replace('uid:', '"uid":"').replace(',find:', '","find":"').replace('}', '"}');
-	if (typeof text !== "string") {
+	if (typeof text !== "string" && typeof text !== "number") {
 		return false;
 	}
+
+	const cleaned = String(text)
+		.replace(/["']/g, "")
+		.replace('uid:', '"uid":"')
+		.replace(',find:', '","find":"')
+		.replace('}', '"}');
+
 	try {
-		var json = JSON.parse(text);
-		return (typeof json === 'object');
+		const json = JSON.parse(cleaned);
+		return json !== null && typeof json === 'object';
 	} catch (error) {
 		return false;
 	}
 }
 
-// WhatsApp-web.js Functions
-const client = new Client({
-	authStrategy: new LocalAuth({
-		clientId: Debug('OPTIONS').appname
-	}),
 
-	puppeteer: {
-		headless: true,
-		args: [
-			'--no-sandbox',
-			'--disable-setuid-sandbox',
-			'--disable-extensions',
-			'--disable-dev-shm-usage',
-			'--disable-accelerated-2d-canvas',
-			'--no-first-run',
-			'--no-zygote',
-			'--single-process',
-			'--disable-gpu'
-		]
-	},
-});
-io.on('connection', function(socket) {
-	socket.emit('Version', Package.version);
-	socket.emit('Manager', Debug('MKAUTH').aimbot);
-	socket.emit('Patched', Release(Debug('RELEASE').mwsm));
-	socket.emit('Reset', true);
-	if (Session || Boolean(Debug('OPTIONS').auth)) {
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').authenticated);
-		socket.emit('qr', Debug('RESOURCES').authenticated);
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').ready);
-		socket.emit('qr', Debug('RESOURCES').ready);
-		Session = false;
-	} else {
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').connection);
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').connection);
-		socket.emit('qr', Debug('RESOURCES').connection);
-	}
 
-	client.on('qr', (qr) => {
-		if (!Session) {
-			qrcode.toDataURL(qr, (err, url) => {
-				socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').connection);
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').connection);
-				socket.emit('qr', Debug('RESOURCES').connection);
-				socket.emit('Reset', true);
-				delay(1000).then(async function() {
-					try {
-						socket.emit('qr', url);
-					} catch (err) {
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + err);
-						socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + err);
-					} finally {
-						socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').received);
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').received);
+// ==========================================
+// Heartbeat
+// ==========================================
+function setupConnectionWatchdog() {
+	const rawDelay = parseInt(Debug('OPTIONS').heartdelay, 10);
+	const delayMinutes = (isNaN(rawDelay) || rawDelay < 1) ? 5 : rawDelay;
+
+	setInterval(async () => {
+		try {
+			if (!Boolean(Debug('OPTIONS').heartbeat)) return;
+
+			if (Session) {
+				const state = await client.getState().catch(() => null);
+
+				if (!state || state !== 'CONNECTED') {
+					const appName = Debug('OPTIONS').appname;
+					const consoleMsg = Debug('CONSOLE').heartbeat;
+
+					if (consoleMsg) {
+						const formatted = `> ${appName} : ${consoleMsg}`;
+						console.log(formatted);
+						io.emit('message', formatted);
 					}
 
-				});
-			});
+					process.exit(1);
+				}
+			}
+		} catch (err) {
+			console.log('> ' + Debug('OPTIONS').appname + ' : ' + err);
 		}
-	});
+	}, delayMinutes * 60 * 1000);
+}
 
-	client.on('ready', async () => {
+// ==========================================
+// Engine
+// ==========================================
+let customBrowserPath = (Debug('OPTIONS').browserpath || '').trim();
+const appName = Debug('OPTIONS').appname;
+
+const puppeteerConfig = {
+	headless: true,
+	args: [
+		'--no-sandbox',
+		'--disable-setuid-sandbox',
+		'--disable-dev-shm-usage',
+		'--disable-accelerated-2d-canvas',
+		'--no-first-run',
+		'--disable-gpu',
+		'--disable-software-rasterizer'
+	]
+};
+
+const client = new Client({
+	authStrategy: new LocalAuth({
+		clientId: appName
+	}),
+	puppeteer: puppeteerConfig
+});
+
+const logAndEmit = (consoleMsg, qrResource) => {
+	const appName = Debug('OPTIONS').appname;
+	if (consoleMsg) {
+		const formatted = `> ${appName} : ${consoleMsg}`;
+		console.log(formatted);
+		io.emit('message', formatted);
+	}
+	if (qrResource) {
+		io.emit('qr', qrResource);
+	}
+};
+
+client.on('qr', (qr) => {
+	if (!Session) {
+		qrcode.toDataURL(qr, (err, url) => {
+			if (err) {
+				logAndEmit(err.toString());
+				return;
+			}
+			logAndEmit(Debug('CONSOLE').connection, Debug('RESOURCES').connection);
+			io.emit('Reset', true);
+
+			setTimeout(() => {
+				io.emit('qr', url);
+				logAndEmit(Debug('CONSOLE').received);
+			}, 1000);
+		});
+	}
+});
+
+client.on('ready', async () => {
+	try {
 		if (!Boolean(Debug('OPTIONS').auth)) {
 			await link.prepare('UPDATE options SET auth=?').run(1);
 		}
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').ready);
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').ready);
-		socket.emit('qr', Debug('RESOURCES').ready);
-		await socket.emit('Reset', false);
+		logAndEmit(Debug('CONSOLE').ready, Debug('RESOURCES').ready);
+		io.emit('Reset', false);
 		Session = true;
+
 		if (!Permission) {
 			Permission = true;
-			await client.sendMessage(client.info.wid["_serialized"], "*Mwsm Token:*\n" + Password[1]);
+			const wid = client.info?.wid?._serialized;
+			if (wid) {
+				await worker.resume();
+				await client.sendMessage(wid, "*Mwsm Token:*\n" + Password[1]);
+			}
 			await GetUpdate(WServer, false);
 			await WwjsVersion(false);
+
+			setupConnectionWatchdog();
 		}
-	});
+	} catch (err) {
+		console.log('> ' + Debug('OPTIONS').appname + ' : ' + err);
+	}
+});
 
-	client.on('authenticated', (data) => {
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').authenticated);
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').authenticated);
-		socket.emit('qr', Debug('RESOURCES').authenticated);
-		Session = true;
-	});
+client.on('authenticated', () => {
+	logAndEmit(Debug('CONSOLE').authenticated, Debug('RESOURCES').authenticated);
+});
 
-
-	client.on('auth_failure', async () => {
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').auth_failure);
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').auth_failure);
-		socket.emit('qr', Debug('RESOURCES').auth_failure);
-		const unLoad = await link.prepare('UPDATE options SET auth=?').run(0);
-		if (await unLoad) {
-			socket.emit('Reset', true);
-			Session = false;
-			wwjsRun = true;
-		}
-	});
-
-
-	client.on('disconnected', (reason) => {
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').disconnected);
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').disconnected);
-		socket.emit('qr', Debug('RESOURCES').disconnected);
-		db.run("UPDATE options SET auth=?, token=?", [false, null], (err) => {
-			if (err) {
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-			}
-			Session = false;
-			wwjsRun = true;
-		});
-		socket.emit('Reset', true);
-	});
-
-
-	client.on('loading_screen', (percent, message) => {
+client.on('auth_failure', async () => {
+	logAndEmit(Debug('CONSOLE').auth_failure, Debug('RESOURCES').auth_failure);
+	try {
+		await link.prepare('UPDATE options SET auth=?').run(0);
+		io.emit('Reset', true);
 		Session = false;
-		console.log('> ' + Debug('OPTIONS').appname + ' : Loading application', percent + '%');
-		socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : Connecting Application ' + percent + '%');
-		if (percent >= "100") {
-			socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').authenticated);
-			console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').authenticated);
-			socket.emit('qr', Debug('RESOURCES').authenticated);
-		} else {
-			socket.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').connection);
-			console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').connection);
-			socket.emit('qr', Debug('RESOURCES').connection);
-			socket.emit('Reset', true);
+		wwjsRun = true;
+	} catch (err) {
+		console.log('> ' + Debug('OPTIONS').appname + ' : ' + err);
+	}
+});
+
+client.on('disconnected', async (reason) => {
+	try {
+		const appName = Debug('OPTIONS').appname;
+		const msg = `> ${appName} : ${Debug('CONSOLE').disconnected}`;
+		console.log(msg);
+		if (global.io) {
+			global.io.emit('message', msg);
+			global.io.emit('qr', Debug('RESOURCES').disconnected);
+			global.io.emit('Reset', true);
 		}
+		await worker.pause();
+		await link.prepare('UPDATE options SET auth=?, token=?').run(0, null);
+		Session = false;
+		wwjsRun = true;
+		try {
+			await client.logout();
+			await client.destroy();
+		} catch (e) {}
+
 		delay(1000).then(async function() {
-			if (wwjsRun) {
-				wwjsRun = false;
-				WwjsVersion(true);
-			}
+			await exec('npm run restart:mwsm');
 		});
-	});
+
+	} catch (err) {
+		console.log('> ' + Debug('OPTIONS').appname + ' : ' + err);
+	}
+});
+
+client.on('loading_screen', (percent) => {
+	console.log(`> ${Debug('OPTIONS').appname} : Loading application ${percent}%`);
+	io.emit('message', `> ${Debug('OPTIONS').appname} : Connecting Application ${percent}%`);
+
+	if (parseInt(percent, 10) >= 100) {
+		logAndEmit(Debug('CONSOLE').authenticated, Debug('RESOURCES').authenticated);
+	} else {
+		logAndEmit(Debug('CONSOLE').connection, Debug('RESOURCES').connection);
+		io.emit('Reset', true);
+	}
+
+	setTimeout(() => {
+		if (wwjsRun) {
+			wwjsRun = false;
+			WwjsVersion(true);
+		}
+	}, 1000);
+});
+
+io.on('connection', (socket) => {
+	socket.emit('Version', Package.version);
+	socket.emit('Manager', Debug('MKAUTH').aimbot);
+	socket.emit('Patched', Release(Debug('RELEASE').mwsm));
+	socket.emit('Reset', !Session);
+
+	const appName = Debug('OPTIONS').appname;
+
+	if (customBrowserPath === '') {
+		console.log('> ' + appName + ' : ' + Debug('CONSOLE').webdefault);
+		socket.emit('message', '> ' + appName + ' : ' + Debug('CONSOLE').webdefault);
+	} else {
+		if (fs.existsSync(customBrowserPath)) {
+			console.log('> ' + appName + ' : ' + Debug('CONSOLE').websucess);
+			socket.emit('message', '> ' + appName + ' : ' + Debug('CONSOLE').websucess);
+		} else {
+			console.log('> ' + appName + ' : ' + Debug('CONSOLE').webfail);
+			socket.emit('message', '> ' + appName + ' : ' + Debug('CONSOLE').webfail);
+		}
+	}
+
+	const isHeartbeatActive = Boolean(Debug('OPTIONS').heartbeat) && parseInt(Debug('OPTIONS').heartdelay, 10) > 0;
+	const heartbeatMsg = isHeartbeatActive ? Debug('CONSOLE').hearton : Debug('CONSOLE').heartoff;
+
+	if (heartbeatMsg) {
+		const formattedHeartbeat = `> ${appName} : ${heartbeatMsg}`;
+		console.log(formattedHeartbeat);
+		socket.emit('message', formattedHeartbeat);
+	}
+
+	if (Session && Boolean(Debug('OPTIONS').auth)) {
+		console.log(`> ${appName} : ${Debug('CONSOLE').authenticated}`);
+		socket.emit('qr', Debug('RESOURCES').authenticated);
+		socket.emit('message', `> ${appName} : ${Debug('CONSOLE').ready}`);
+		socket.emit('qr', Debug('RESOURCES').ready);
+	} else {
+		socket.emit('message', `> ${appName} : ${Debug('CONSOLE').connection}`);
+		console.log(`> ${appName} : ${Debug('CONSOLE').connection}`);
+		socket.emit('qr', Debug('RESOURCES').connection);
+	}
+
 	socket.emit('background', Debug('RESOURCES').background);
 	socket.emit('donation', Debug('RESOURCES').about);
 	socket.emit('developer', Debug('RESOURCES').developer);
-	delay(2000).then(async function() {
+
+	setTimeout(async () => {
 		if (Permission) {
 			await GetUpdate(WServer, false);
 			await WwjsVersion(false);
 		}
-	});
-
+	}, 2000);
 });
 
 // Reset
 app.post('/reset', async (req, res) => {
-	const Reset = req.body.reset;
-	const Clear = req.body.erase;
-	const unLoad = await link.prepare('UPDATE options SET auth=?').run(0);
-	if (await unLoad) {
-		global.io.emit('qr', Debug('RESOURCES').connection);
+	const {
+		reset,
+		erase
+	} = req.body;
+
+	try {
+		logAndEmit(Debug('CONSOLE').connection, Debug('RESOURCES').connection);
+		io.emit('Reset', true);
+
 		global.io.emit('getlog', true);
-		if (Clear == 'true') {
+		await worker.pause();
+		if (erase === 'true') {
 			const Eraser = await link.prepare('DELETE FROM target').run();
-			if (await Eraser) {
-				const FLUSH = await Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
+
+			if (Eraser) {
+				await Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
 				res.json({
 					Status: "Success"
 				});
-				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').cleanon);
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').cleanon);
-				if (await FLUSH) {
-					delay(2000).then(async function() {
-						await exec('npm run restart:mwsm');
-					});
-				}
+				const msgText = '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').cleanon;
+				global.io.emit('message', msgText);
+				console.log(msgText);
 			} else {
 				res.json({
 					Status: "Fail"
 				});
-				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').cleanoff);
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').cleanoff);
-				delay(2000).then(async function() {
-					await exec('npm run restart:mwsm');
-				});
+				const msgText = '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').cleanoff;
+				global.io.emit('message', msgText);
+				console.log(msgText);
 			}
-		} else {
-			if (Reset == "true") {
-				res.json({
-					Status: undefined
-				});
-				global.io.emit('getlog', true);
-				delay(0).then(async function() {
-					await exec('npm run restart:mwsm');
-				});
-			}
+		} else if (reset === "true") {
+			res.json({
+				Status: undefined
+			});
 		}
+
+		delay(1000).then(async () => {
+			await exec('npm run restart:mwsm');
+		});
+
+	} catch (error) {
+		console.log('> ' + Debug('OPTIONS').appname + ' : ' + error);
+		res.status(500).json({
+			Status: "Error",
+			Message: error.message
+		});
 	}
 });
 
-// Shutdown
+// ==================================================
+// ?? Shutdown / Logout Route
+// ==================================================
 app.post('/shutdown', async (req, res) => {
-	const Shutdown = req.body.shutdown;
-	const Token = req.body.token;
-	if (Shutdown == "true" && [Debug('OPTIONS').token, Password[1]].includes(Token)) {
+	const {
+		shutdown: Shutdown,
+		token: Token
+	} = req.body;
+	const appName = Debug('OPTIONS').appname;
+
+	if (Shutdown === "true" && [Password[0], Password[1]].includes(Token)) {
 		res.json({
 			Status: "Success"
 		});
+
 		global.io.emit('getlog', true);
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').disconnected);
-		console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').disconnected);
+		global.io.emit('message', '> ' + appName + ' : ' + Debug('CONSOLE').disconnected);
+		console.log('> ' + appName + ' : ' + Debug('CONSOLE').disconnected);
 		global.io.emit('qr', Debug('RESOURCES').disconnected);
-		const Logout = await client.logout();
-		if (Logout) {
-			db.run("UPDATE options SET auth=?, token=?", [false, null], (err) => {
-				if (err) {
-					console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-				}
-				global.io.emit('Reset', true);
-				Session = false;
-			});
-			const Destroy = await client.destroy();
-			if (Destroy) {
-				delay(0).then(async function() {
-					await exec('npm run restart:mwsm');
-				});
-			}
+		global.io.emit('Reset', true);
+		await worker.pause();
+		Session = false;
+
+		try {
+			link.prepare('UPDATE options SET auth=?, token=?').run(0, null);
+		} catch (err) {
+			console.log('> ' + appName + ' : ' + err);
 		}
+
+		try {
+			if (typeof client !== 'undefined' && client) {
+				await Promise.race([
+					client.logout().catch(() => {}),
+					delay(3000)
+				]);
+				await client.destroy().catch(() => {});
+			}
+		} catch (e) {
+			console.log('> ' + appName + ' : ' + e);
+		}
+
+		delay(1000).then(async () => {
+			global.io.emit('message', '> ' + appName + ' : ' + Debug('CONSOLE').connection);
+			console.log('> ' + appName + ' : ' + Debug('CONSOLE').connection);
+			global.io.emit('qr', Debug('RESOURCES').connection);
+			await exec('npm run restart:mwsm');
+		});
+
 	} else {
 		res.json({
 			Status: "Fail",
@@ -2212,69 +2813,125 @@ app.post('/shutdown', async (req, res) => {
 	}
 });
 
-
 // Authenticated
 app.post('/authenticated', (req, res) => {
-	if (Boolean(Debug('OPTIONS').auth)) {
-		res.json({
-			Status: "Success"
-		});
-
-	} else {
-		res.json({
-			Status: "Fail"
-		});
-	}
+	res.json({
+		Status: Boolean(Debug('OPTIONS').auth) ? "Success" : "Fail"
+	});
 });
 
 // Debug
 app.post('/debug', (req, res) => {
-	const debug = req.body.debug;
-	if (Debug('OPTIONS').debugger != debug) {
-		db.run("UPDATE options SET debugger=?", [debug], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('OPTIONS').debugger
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: debug
+	const {
+		debug
+	} = req.body;
+
+	if (Debug('OPTIONS').debugger === debug) {
+		return res.json({
+			Status: "Success",
+			Return: debug
+		});
+	}
+
+	db.run("UPDATE options SET debugger=?", [debug], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: Debug('OPTIONS').debugger
 			});
+		}
+		res.json({
+			Status: "Success",
+			Return: debug
+		});
+	});
+});
+
+
+
+app.post('/send-mkauth', async (req, res) => {
+	try {
+		const result = await ProcessMkAuthMessage(req.body);
+		if (result.Status === "Success") {
+			return res.json({
+				Status: "Success",
+				Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success,
+				RPush: DateTime(),
+				RStatus: result.RStatus || "Sent",
+				RCode: result.RCode
+			});
+		} else if (result.Status === "Ignored") {
+			return res.json({
+				Status: "Fail",
+				Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').reason,
+				RPush: DateTime(),
+				RStatus: "Fail",
+				RCode: result.RCode
+			});
+		} else {
+			return res.json({
+				Status: "Fail",
+				Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error,
+				RPush: DateTime(),
+				RStatus: "Fail",
+				RCode: result.RCode
+			});
+		}
+	} catch (err) {
+		return res.status(500).json({
+			Status: "Fail",
+			Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error,
+			RPush: DateTime(),
+			RStatus: "Fail",
+			RCode: req.body.code
 		});
 	}
 });
 
-// MkAuth Set Message
-app.post('/send-mkauth', async (req, res) => {
-	const User = req.body.user;
-	const Client = req.body.client;
-	const Code = req.body.code;
-	const Status = req.body.status;
-	const Reward = req.body.reward;
-	const Push = req.body.push;
-	const Token = req.body.token;
-	const Cash = req.body.cash;
-	const Gateway = req.body.gateway;
-	const UnLock = req.body.unlock;
-	const Option = req.body.option;
+
+async function ProcessMkAuthMessage(payloadData) {
+	const User = payloadData.user;
+	const Client = payloadData.client;
+	const Authority = payloadData.authority || payloadData.client;
+	const Code = payloadData.code;
+	const Status = payloadData.status;
+	const Reward = payloadData.reward;
+	const Token = payloadData.token;
+	const Cash = payloadData.cash;
+	const Gateway = payloadData.gateway;
+	const UnLock = payloadData.unlock;
+	const Option = payloadData.option;
 	const Speed = Debug('SCHEDULER').speed;
 	const Block = Debug('SCHEDULER').block;
-	const Factor = req.body.process
-	var Contact = req.body.contact;
-	var Process, Direct, Storange;
-	var Pulse = DateTime();
-	var Payment = req.body.payment;
-	if (validPhone(Playground)) {
-		Contact = '55' + Playground;
+	const Factor = payloadData.process;
+	const Headshot = payloadData.headshot ?? false;
+
+	const Priority = payloadData.priority || 4;
+	let Pulse = DateTime();
+
+	if (Code && isDuplicate(Code, Priority, Pulse) && !Headshot) {
+		return {
+			Status: "Ignored",
+			RCode: Code
+		};
 	}
+
+	let Contact = DDISet(payloadData.contact);
+	let Process, Direct;
+	let Payment = payloadData.payment;
+	let Message = "";
+
+	if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+		Contact = DDISet(Playground);
+	}
+
 	if (Option == "support") {
 		Payment = "support";
-	} else if ((Reward.split(" ")[0]) == (DateTime()).split(" ")[0] && Payment != "paid") {
+	} else if (Reward && (Reward.split(" ")[0]) == (DateTime()).split(" ")[0] && Payment != "paid") {
 		Payment = "open";
 	}
-	switch (await Payment) {
+
+	switch (Payment) {
 		case 'paid':
 			if (Boolean(Debug('SCHEDULER').onunlock) || Boolean(Debug('SCHEDULER').onlock)) {
 				switch (Factor) {
@@ -2287,13 +2944,14 @@ app.post('/send-mkauth', async (req, res) => {
 			} else {
 				Message = DebugMsg("PAY");
 			}
-			if (Status.toLowerCase() != "finished") {
+			if (Status && Status.toLowerCase() != "finished") {
 				Process = "Finished";
 			}
 			Direct = "Pay";
 			break;
+
 		case 'due':
-			if ((Reward.split(" ")[0]) == (DateTime()).split(" ")[0]) {
+			if (Reward && (Reward.split(" ")[0]) == (DateTime()).split(" ")[0]) {
 				Message = DebugMsg("DAY");
 			} else if (Option != undefined) {
 				if (Boolean(Debug('SCHEDULER').onspeed) && Option == 'speed') {
@@ -2314,6 +2972,7 @@ app.post('/send-mkauth', async (req, res) => {
 							break;
 						default:
 							Message = DebugMsg("LATER");
+							break;
 					}
 				} else {
 					Message = DebugMsg("LATER");
@@ -2321,73 +2980,105 @@ app.post('/send-mkauth', async (req, res) => {
 			} else {
 				Message = DebugMsg("LATER");
 			}
-			if (Status.toLowerCase() == "pending" || Status.toLowerCase() == "fail") {
+
+			if (Status && (Status.toLowerCase() == "pending" || Status.toLowerCase() == "fail")) {
 				Process = "Sent";
-			} else if (Status.toLowerCase() == "sent" || Status.toLowerCase() == "resend") {
+			} else if (Status && (Status.toLowerCase() == "sent" || Status.toLowerCase() == "resend")) {
 				Process = "Resend";
 			}
 			break;
+
 		case 'open':
-			if ((Reward.split(" ")[0]) == (DateTime()).split(" ")[0]) {
+			if (Reward && (Reward.split(" ")[0]) == (DateTime()).split(" ")[0]) {
 				Message = DebugMsg("DAY");
 			} else {
 				Message = DebugMsg("BEFORE");
 			}
-			if (Status.toLowerCase() == "pending" || Status.toLowerCase() == "fail") {
+
+			if (Status && (Status.toLowerCase() == "pending" || Status.toLowerCase() == "fail")) {
 				Process = "Sent";
-			} else if (Status.toLowerCase() == "sent" || Status.toLowerCase() == "resend") {
+			} else if (Status && (Status.toLowerCase() == "sent" || Status.toLowerCase() == "resend")) {
 				Process = "Resend";
 			}
 			break;
+
 		case 'support':
 			Message = DebugMsg("SUPPORT");
 			break;
-
+		default:
+			break;
 	}
-	Mensagem = Message.replaceAll('%nomeresumido%', toCapitalize(Client.split(" ")[0])).replaceAll('%vencimento%', new Date(Reward).toLocaleString("pt-br").split(",")[0]).replaceAll('%logincliente%', User).replaceAll('%valorpago%', Cash).replaceAll('%bloqatrazo%', Block).replaceAll('%metodo%', Gateway).replaceAll('%reduzatrazo%', Speed).replaceAll('%numerotitulo%', Code).replaceAll('%pagamento%', new Date(Pulse).toLocaleString("pt-br").split(",")[0] + " as " + (Pulse.split(" ")[1]).split(":")[0] + ":" + (Pulse.split(" ")[1]).split(":")[1]);
-	if ([Debug('OPTIONS').token, Password[1]].includes(Token) && validPhone(Contact)) {
-		const data = {
-			to: '55' + Contact,
-			msg: Mensagem,
-			pass: Token,
-			send: Direct,
-			user: Client,
-			auth: Debug('MKAUTH').aimbot
-		};
-		Start = false;
-		const PostMessage = await axios.post("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/send-message", data);
-		if (await PostMessage) {
-			if (PostMessage.data.Status == "Fail") {
-				Process = "Fail";
-			}
-			if (Debug("STORANGE", "*", "DIRECT", Code).title == undefined) {
-				Storange = await link.prepare("INSERT INTO storange(title, user, client, contact, reward, status, push) VALUES(?, ?, ?, ?, ?, ?, ?)").run(Code, User, Client, Contact, Reward, Process, Pulse);
-			} else {
-				Storange = db.run("UPDATE storange SET push=?, status=? WHERE title=?", [Pulse, Process, Code], (err) => {
-					if (err) {
-						return false;
-					}
-					return true;
-				});
-			}
-			return res.json({
-				Status: PostMessage.data.Status,
-				Return: PostMessage.data.message,
-				RPush: Pulse,
-				RStatus: Process,
-				RCode: Code
-			});
+
+	const dataVencimentoFormatada = Reward ?
+		Reward.split(" ")[0].split("-").reverse().join("/") :
+		"";
+
+	const dataPagamentoFormatada = Pulse ?
+		Pulse.split(" ")[0].split("-").reverse().join("/") + " as " + Pulse.split(" ")[1].substring(0, 5) :
+		"";
+
+	let MensagemFormatada = Message
+		.replaceAll('%nomeresumido%', toCapitalize((Client || "").split(" ")[0]))
+		.replaceAll('%vencimento%', dataVencimentoFormatada)
+		.replaceAll('%logincliente%', User)
+		.replaceAll('%valorpago%', Cash)
+		.replaceAll('%bloqatrazo%', Block)
+		.replaceAll('%metodo%', Gateway)
+		.replaceAll('%reduzatrazo%', Speed)
+		.replaceAll('%numerotitulo%', Code)
+		.replaceAll('%pagamento%', dataPagamentoFormatada);
+
+	const isValidToken = [Password[0], Password[1]].includes(Token);
+	const isValidFormat = validPhone(Contact);
+
+	if (isValidToken && isValidFormat) {
+		const storageCheck = Debug("STORANGE", "*", "DIRECT", Code);
+		if (!storageCheck || storageCheck.title == undefined) {
+			await link.prepare("INSERT INTO storange(title, user, client, contact, reward, status, push) VALUES(?, ?, ?, ?, ?, ?, ?)").run(Code, User, Authority, Contact, Reward, Process, Pulse);
 		} else {
-			res.json({
-				Status: "Fail",
-				Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error,
-				RPush: Pulse,
+			await link.prepare("UPDATE storange SET push=?, status=? WHERE title=?").run(Pulse, Process, Code);
+		}
+
+		const enqueueResult = await EnqueueWithPriority({
+			to: Contact,
+			msg: MensagemFormatada,
+			auth: Debug('MKAUTH').aimbot,
+			user: Authority,
+			send: Direct,
+			simulator: false,
+			pass: Token,
+			priority: Priority,
+			code: Code
+		});
+
+		if (!enqueueResult) {
+			return {
+				Status: "Ignored",
 				RStatus: Process,
 				RCode: Code
-			});
+			};
 		}
+
+		if (Code) {
+			await link.prepare("UPDATE scheduling SET process='load' WHERE title=?").run(Code);
+		}
+
+		if (global.io) {
+			global.io.emit('schedresume', Code);
+
+			const pendenciasRestantes = await link.prepare("SELECT COUNT(*) as total FROM scheduling WHERE process = 'wait'").get();
+			if (!pendenciasRestantes || pendenciasRestantes.total === 0) {
+				global.io.emit('schedresume', 'true');
+			}
+		}
+
+		return {
+			Status: "Success",
+			RStatus: Process,
+			RCode: Code
+		};
 	} else {
-		Json = {
+		let Json = {
 			"Mwsm": "/mwsm-message",
 			"Main": "Mwsm",
 			"Start": DateTime()
@@ -2396,581 +3087,729 @@ app.post('/send-mkauth', async (req, res) => {
 			Json = JSON.stringify(Json);
 		}
 		console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
+
 		Process = "Fail";
-		if (Debug("STORANGE", "*", "DIRECT", Code).title == undefined) {
-			Storange = await link.prepare("INSERT INTO storange(title, user, client, contact, reward, status, push) VALUES(?, ?, ?, ?, ?, ?, ?)").run(Code, User, Client, Contact, Reward, Process, Pulse);
+		const storageCheck = Debug("STORANGE", "*", "DIRECT", Code);
+		if (!storageCheck || storageCheck.title == undefined) {
+			await link.prepare("INSERT INTO storange(title, user, client, contact, reward, status, push) VALUES(?, ?, ?, ?, ?, ?, ?)").run(Code, User, Authority, Contact, Reward, Process, Pulse);
 		} else {
-			Storange = db.run("UPDATE storange SET push=?, status=? WHERE title=?", [Pulse, Process, Code], (err) => {
-				if (err) {
-					return false;
-				}
-				return true;
-			});
+			await link.prepare("UPDATE storange SET push=?, status=? WHERE title=?").run(Pulse, Process, Code);
 		}
 
-
 		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-		res.json({
+		if (global.io) {
+			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+			global.io.emit('schedresume', Code);
+		}
+
+		return {
 			Status: "Fail",
-			Return: Debug('CONSOLE').missing,
-			RPush: Pulse,
 			RStatus: Process,
 			RCode: Code
-
-		});
+		};
 	}
-});
+}
 
 
 // API Update
 app.post('/update', async (req, res) => {
-	const UP = req.body.uptodate;
-	if (Debug('RELEASE').isupdate != UP) {
-		const Update = await Dataset('RELEASE', 'ISUPDATE', UP, 'UPDATE');
-		if (Update) {
-			res.json({
-				Status: "Success",
-				Return: UP
-			});
-		} else {
-			res.json({
-				Status: "Fail",
-				Return: Debug('RELEASE').isupdate
-			});
+	const {
+		uptodate: UP
+	} = req.body;
+	const currentUpdate = Debug('RELEASE').isupdate;
 
-		}
+	if (currentUpdate === UP) {
+		return res.json({
+			Status: "Success",
+			Return: UP
+		});
 	}
+
+	const Update = await Dataset('RELEASE', 'ISUPDATE', UP, 'UPDATE');
+
+	res.json({
+		Status: Update ? "Success" : "Fail",
+		Return: Update ? UP : currentUpdate
+	});
 });
 
 
 // API Protect
 app.post('/protected', (req, res) => {
-	const Protect = req.body.protect;
-	if (Debug('OPTIONS').protect != Protect) {
-		db.run("UPDATE options SET protect=?", [Protect], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('OPTIONS').protect
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: Protect
-			});
+	const {
+		protect: Protect
+	} = req.body;
+	const currentProtect = Debug('OPTIONS').protect;
+
+	if (currentProtect == Protect) {
+		return res.json({
+			Status: "Success",
+			Return: Protect
 		});
 	}
+
+	db.run("UPDATE options SET protect=?", [Protect], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentProtect
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: Protect
+		});
+	});
 });
 
 // Tag
 app.post('/tag', (req, res) => {
-	const Tag = req.body.tag;
-	if (Debug('OPTIONS').tag != Tag) {
-		db.run("UPDATE options SET tag=?", [Tag], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('OPTIONS').tag
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: Tag
-			});
+	const {
+		tag: Tag
+	} = req.body;
+	const currentTag = Debug('OPTIONS').tag;
+
+	if (currentTag == Tag) {
+		return res.json({
+			Status: "Success",
+			Return: Tag
 		});
 	}
-});
 
+	db.run("UPDATE options SET tag=?", [Tag], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentTag
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: Tag
+		});
+	});
+});
 
 
 // Backup
 app.post('/backup', (req, res) => {
-	const Backup = req.body.backup;
-	if (Debug('MKAUTH').backup != Backup) {
-		db.run("UPDATE mkauth SET backup=?", [Backup], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('MKAUTH').backup
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: Backup
-			});
+	const {
+		backup: Backup
+	} = req.body;
+	const currentBackup = Debug('MKAUTH').backup;
+
+	if (currentBackup == Backup) {
+		return res.json({
+			Status: "Success",
+			Return: Backup
 		});
 	}
-});
 
+	db.run("UPDATE mkauth SET backup=?", [Backup], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentBackup
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: Backup
+		});
+	});
+});
 
 
 
 // Owner
 app.post('/owner', (req, res) => {
-	const ShortName = req.body.owner;
-	if (Debug('MKAUTH').owner != ShortName) {
-		db.run("UPDATE mkauth SET owner=?", [ShortName], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('MKAUTH').owner
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: ShortName
-			});
+	const {
+		owner: ShortName
+	} = req.body;
+	const currentOwner = Debug('MKAUTH').owner;
+
+	if (currentOwner == ShortName) {
+		return res.json({
+			Status: "Success",
+			Return: ShortName
 		});
 	}
-});
 
+	db.run("UPDATE mkauth SET owner=?", [ShortName], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentOwner
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: ShortName
+		});
+	});
+});
 
 
 
 // OnReboot
 app.post('/onreboot', (req, res) => {
-	const OnReboot = req.body.onreboot;
-	if (Debug('OPTIONS').onreboot != OnReboot) {
-		db.run("UPDATE options SET onreboot=?", [OnReboot], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('OPTIONS').onreboot
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: OnReboot
-			});
+	const {
+		onreboot: OnReboot
+	} = req.body;
+	const currentOnReboot = Debug('OPTIONS').onreboot;
+
+	if (currentOnReboot == OnReboot) {
+		return res.json({
+			Status: "Success",
+			Return: OnReboot
 		});
 	}
+
+	db.run("UPDATE options SET onreboot=?", [OnReboot], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentOnReboot
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: OnReboot
+		});
+	});
 });
+
 
 // Prevent
 app.post('/prevent', (req, res) => {
-	const Prevent = req.body.prevent;
-	if (Debug('MKAUTH').prevent != Prevent) {
-		db.run("UPDATE mkauth SET prevent=?", [Prevent], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('MKAUTH').prevent
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: Prevent
-			});
+	const {
+		prevent: Prevent
+	} = req.body;
+	const currentPrevent = Debug('MKAUTH').prevent;
+
+	if (currentPrevent == Prevent) {
+		return res.json({
+			Status: "Success",
+			Return: Prevent
 		});
 	}
+
+	db.run("UPDATE mkauth SET prevent=?", [Prevent], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentPrevent
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: Prevent
+		});
+	});
 });
+
 
 // RegEx
 app.post('/regex', (req, res) => {
-	const RegEx = req.body.regex;
-	if (Debug('OPTIONS').regex != RegEx) {
-		db.run("UPDATE options SET regex=?", [RegEx], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('OPTIONS').regex
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: RegEx
-			});
+	const {
+		regex: RegEx
+	} = req.body;
+	const currentRegex = Debug('OPTIONS').regex;
+
+	if (currentRegex == RegEx) {
+		return res.json({
+			Status: "Success",
+			Return: RegEx
 		});
 	}
+
+	db.run("UPDATE options SET regex=?", [RegEx], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentRegex
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: RegEx
+		});
+	});
 });
 
-const Emoticons = async (FIND, IN, OUT) => {
-	return link.prepare('SELECT ' + OUT + ' FROM emotions WHERE ' + IN + '= ?').get(FIND);
-}
-app.post('/emoji', async (req, res) => {
-	const FIND = req.body.find;
-	const IN = req.body.in;
-	const OUT = req.body.out;
-	if (IN == "emoji") {
-		var Emoji = emoji.unemojify(FIND);
-	} else {
-		var Emoji = await Emoticons(FIND, IN, OUT);
-	}
-	if (await Emoji) {
-		if (IN != "emoji" && IN != "socket") {
-			switch (OUT) {
-				case 'unicode':
-					Emoji = Emoji.unicode;
-					break;
-				case 'html':
-					Emoji = Emoji.html;
-					break;
-				case 'emoji':
-					Emoji = Emoji.emoji;
-					break;
-				case 'name':
-					Emoji = Emoji.name;
-					break;
-				case 'key':
-					Emoji = Emoji.key;
-					break;
-			}
 
+const Emoticons = async (FIND, IN, OUT) => {
+	return link.prepare(`SELECT ${OUT} FROM emotions WHERE ${IN} = ?`).get(FIND);
+};
+
+// Emoji
+app.post('/emoji', async (req, res) => {
+	const {
+		find: FIND,
+		in: IN,
+		out: OUT
+	} = req.body;
+
+	let Emoji = IN === "emoji" ? emoji.unemojify(FIND) : await Emoticons(FIND, IN, OUT);
+
+	if (Emoji) {
+		if (IN !== "emoji" && IN !== "socket") {
+			const mappings = {
+				unicode: 'unicode',
+				html: 'html',
+				emoji: 'emoji',
+				name: 'name',
+				key: 'key'
+			};
+			if (mappings[OUT]) {
+				Emoji = Emoji[mappings[OUT]];
+			}
 		}
-		if (Emoji != undefined) {
-			res.json({
+
+		if (Emoji !== undefined) {
+			return res.json({
 				Status: "Success",
 				Return: Emoji
 			});
-		} else {
-			res.json({
-				Status: "Fail",
-				Return: FIND
-			});
 		}
+	}
+
+	res.json({
+		Status: "Fail",
+		Return: FIND
+	});
+});
+
+app.post('/forceupdate', async (req, res) => {
+	try {
+		await Dataset('RELEASE', 'reload', 'true', 'UPDATE');
+
+		const Register = await GetUpdate(WServer, true, true);
+
+		return res.json({
+			Status: Register?.Update === "true" ? "Success" : "Fail"
+		});
+
+	} catch (err) {
+		return res.status(500).json({
+			Status: "Fail",
+			Error: err.message
+		});
+
+	} finally {
+		try {
+			await Dataset('RELEASE', 'reload', 'false', 'UPDATE');
+		} catch (cleanupErr) {}
 	}
 });
 
-// Force Update
-app.post('/forceupdate', async (req, res) => {
-	const Update = req.body.update;
-	if (Debug('RELEASE').isupdate != Update) {
-		await Dataset('RELEASE', 'reload', 'true', 'UPDATE');
-		const Register = await GetUpdate(WServer, true, true);
-		await Dataset('RELEASE', 'reload', 'false', 'UPDATE');
-		if (Register.Update == "true") {
-			res.json({
-				Status: "Success"
-			});
-		} else {
-			res.json({
-				Status: "Fail"
-			});
-		}
-	} else {
-		res.json({
-			Status: "Fail"
+// Force Backup
+app.post('/forcebackup', async (req, res) => {
+	const {
+		backup: Backup
+	} = req.body;
+
+	if (!Boolean(Backup)) {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').request
 		});
 	}
-});
 
-
-// Force Bakcup
-app.post('/forcebackup', async (req, res) => {
 	await Dataset('RELEASE', 'reload', 'true', 'UPDATE');
-	const Backup = req.body.backup;
-	if (Boolean(Backup)) {
-		const Reload = await SetSchedule(true);
-		if (await Reload) {
-			await Dataset('RELEASE', 'reload', 'false', 'UPDATE');
-			return res.json({
-				Status: "Success",
-				Return: Debug('CONSOLE').schedule
-			});
-		} else {
-			await Dataset('RELEASE', 'reload', 'false', 'UPDATE');
-			return res.json({
-				Status: "Fail",
-				Return: Debug('CONSOLE').request
-			});
-		}
-	}
-});
+	const Reload = await SetSchedule(true);
+	await Dataset('RELEASE', 'reload', 'false', 'UPDATE');
 
+	if (Reload) {
+		return res.json({
+			Status: "Success",
+			Return: Debug('CONSOLE').schedule
+		});
+	}
+
+	res.json({
+		Status: "Fail",
+		Return: Debug('CONSOLE').request
+	});
+});
 
 
 // Spam
 app.post('/spam', (req, res) => {
-	const Level = req.body.level;
-	if (Debug('MKAUTH').level != Level) {
-		db.run("UPDATE mkauth SET level=?", [Level], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('MKAUTH').level
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: Level
-			});
+	const {
+		level: Level
+	} = req.body;
+	const currentLevel = Debug('MKAUTH').level;
+
+	if (currentLevel == Level) {
+		return res.json({
+			Status: "Success",
+			Return: Level
 		});
 	}
+
+	db.run("UPDATE mkauth SET level=?", [Level], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentLevel
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: Level
+		});
+	});
 });
 
 
 // Shift
 app.post('/shift', async (req, res) => {
-	const Shift = req.body.shift;
-	const Min = req.body.min;
-	const Max = req.body.max;
+	const {
+		shift: Shift,
+		min: Min,
+		max: Max
+	} = req.body;
 	const hasShift = await Dataset('SCHEDULER', 'shift', Shift, 'UPDATE');
-	if (await hasShift) {
-		if (Boolean(Debug('SCHEDULER').shift)) {
-			const hasMin = await Dataset('SCHEDULER', 'min', Min, 'UPDATE');
-			const hasMax = await Dataset('SCHEDULER', 'max', Max, 'UPDATE');
-			if (await hasMin && await hasMax) {
-				res.json({
-					Status: "Success",
-					Return: true
-				});
-			} else {
-				res.json({
-					Status: "Fail",
-					Return: false
-				});
 
-			}
-		} else {
-			const hasMin = await Dataset('SCHEDULER', 'min', '08', 'UPDATE');
-			const hasMax = await Dataset('SCHEDULER', 'max', '22', 'UPDATE');
-			if (await hasMin && await hasMax) {
-				res.json({
-					Status: "Success",
-					Return: false
-				});
-			} else {
-				res.json({
-					Status: "Fail",
-					Return: false
-				});
-
-			}
-		}
-	}
-});
-
-// Aimbot
-app.post('/aimbot', async (req, res) => {
-	const Aimbot = req.body.aimbot;
-	const Base = await Dataset('MKAUTH', 'AIMBOT', Aimbot, 'UPDATE');
-	if (await Base) {
-		if (Boolean(Debug('MKAUTH').aimbot)) {
-			res.json({
-				Status: "Success",
-				Return: true
-			});
-
-		} else {
-			res.json({
-				Status: "Success",
-				Return: false
-			});
-		}
-	} else {
-		res.json({
+	if (!hasShift) {
+		return res.json({
 			Status: "Fail",
+			Return: false
+		});
+	}
+
+	if (Boolean(Debug('SCHEDULER').shift)) {
+		const hasMin = await Dataset('SCHEDULER', 'min', Min, 'UPDATE');
+		const hasMax = await Dataset('SCHEDULER', 'max', Max, 'UPDATE');
+
+		return res.json({
+			Status: (hasMin && hasMax) ? "Success" : "Fail",
+			Return: (hasMin && hasMax) ? true : false
+		});
+	} else {
+		const hasMin = await Dataset('SCHEDULER', 'min', '08', 'UPDATE');
+		const hasMax = await Dataset('SCHEDULER', 'max', '22', 'UPDATE');
+
+		return res.json({
+			Status: (hasMin && hasMax) ? "Success" : "Fail",
 			Return: false
 		});
 	}
 });
 
 
-// Token
-app.post('/token', async (req, res) => {
-	const Token = req.body.token;
-	if ([Debug('OPTIONS').token, Password[1]].includes(Token)) {
-		global.io.emit('interval', Debug('OPTIONS').interval);
-		global.io.emit('sleep', Debug('OPTIONS').sleep);
-		global.io.emit('sendwait', Debug('OPTIONS').sendwait);
-		global.io.emit('response', Debug('OPTIONS').response);
-		global.io.emit('call', Debug('OPTIONS').call);
-		global.io.emit('access', Debug('OPTIONS').access);
-		global.io.emit('port', Debug('OPTIONS').access);
-		global.io.emit('pixfail', Debug('OPTIONS').pixfail);
-		global.io.emit('replyes', Debug('OPTIONS').replyes);
-		global.io.emit('alert', Debug('OPTIONS').alert);
-		global.io.emit('count', Debug('OPTIONS').count);
-		global.io.emit('onbot', Debug('OPTIONS').onbot);
-		global.io.emit('reject', Debug('OPTIONS').reject);
-		global.io.emit('limiter', Debug('OPTIONS').limiter);
-		global.io.emit('domain', Debug('MKAUTH').domain);
-		global.io.emit('tunel', Debug('MKAUTH').tunel);
-		global.io.emit('username', Debug('MKAUTH').client_id);
-		global.io.emit('password', Debug('MKAUTH').client_secret);
-		global.io.emit('module', Debug('MKAUTH').module);
-		global.io.emit('bar', Debug('MKAUTH').bar);
-		global.io.emit('pix', Debug('MKAUTH').pix);
-		global.io.emit('qrpix', Debug('MKAUTH').qrpix);
-		global.io.emit('qrlink', Debug('MKAUTH').qrlink);
-		global.io.emit('pdf', Debug('MKAUTH').pdf);
-		global.io.emit('delay', Debug('MKAUTH').delay);
-		global.io.emit('iserver', Debug('MKAUTH').client_link);
-		global.io.emit('imode', Debug('MKAUTH').mode);
+// Aimbot
+app.post('/aimbot', async (req, res) => {
+	const {
+		aimbot: Aimbot
+	} = req.body;
+	const Base = await Dataset('MKAUTH', 'AIMBOT', Aimbot, 'UPDATE');
 
-		global.io.emit('debugger', Debug('OPTIONS').debugger);
-		global.io.emit('Tag', Debug('OPTIONS').tag);
-		global.io.emit('regex', Debug('OPTIONS').regex);
-                global.io.emit('onreboot', Debug('OPTIONS').onreboot);
-		global.io.emit('uptodate', Debug('RELEASE').isupdate);
-		global.io.emit('protected', Debug('OPTIONS').protect);
-		global.io.emit('spam', Debug('MKAUTH').level);
-		global.io.emit('backup', Debug('MKAUTH').backup);
-		global.io.emit('aimbot', Debug('MKAUTH').aimbot);
-		global.io.emit('doublekill', Debug('MKAUTH').prevent);
-		global.io.emit('owner', Debug('MKAUTH').owner);
-		global.io.emit('ismonth', (DateTime().split('-')[1]));
-		global.io.emit('isyear', (DateTime().split('-')[0]));
-		global.io.emit('issearch', 'all');
+	if (!Base) {
+		return res.json({
+			Status: "Fail",
+			Return: false
+		});
+	}
 
-		global.io.emit('bfive', Debug('SCHEDULER').bfive);
-		global.io.emit('inday', Debug('SCHEDULER').inday);
-		global.io.emit('lfive', Debug('SCHEDULER').lfive);
-		global.io.emit('lten', Debug('SCHEDULER').lten);
-		global.io.emit('lfifteen', Debug('SCHEDULER').lfifteen);
-		global.io.emit('ltwenty', Debug('SCHEDULER').ltwenty);
-		global.io.emit('ltwentyfive', Debug('SCHEDULER').ltwentyfive);
-		global.io.emit('lthirty', Debug('SCHEDULER').lthirty);
-		global.io.emit('lthirtyfive', Debug('SCHEDULER').lthirtyfive);
-		global.io.emit('lforty', Debug('SCHEDULER').lforty);
-		global.io.emit('shift', Debug('SCHEDULER').shift);
-		global.io.emit('min', AddZero(Debug('SCHEDULER').min));
-		global.io.emit('max', Debug('SCHEDULER').max);
+	res.json({
+		Status: "Success",
+		Return: Boolean(Debug('MKAUTH').aimbot)
+	});
+});
 
 
-		global.io.emit('sunday', Debug('SCHEDULER').sunday);
-		global.io.emit('monday', Debug('SCHEDULER').monday);
-		global.io.emit('tuesday', Debug('SCHEDULER').tuesday);
-		global.io.emit('wednesday', Debug('SCHEDULER').wednesday);
-		global.io.emit('thursday', Debug('SCHEDULER').thursday);
-		global.io.emit('friday', Debug('SCHEDULER').friday);
-		global.io.emit('saturday', Debug('SCHEDULER').saturday);
-		global.io.emit('morning', Debug('SCHEDULER').morning);
-		global.io.emit('afternoon', Debug('SCHEDULER').afternoon);
-		global.io.emit('night', Debug('SCHEDULER').night);
+async function SyncEngineModules(customToken = null) {
+	const Token = customToken || Debug('OPTIONS')?.keygen;
+	if (!Token) {
+		return;
+	}
 
-		global.io.emit('OnPay', Debug('SCHEDULER').onpay);
-		global.io.emit('OnLock', Debug('SCHEDULER').onlock);
-		global.io.emit('OnUnlock', Debug('SCHEDULER').onunlock);
-		global.io.emit('OnMaintenance', Debug('SCHEDULER').onmaintenance);
-		global.io.emit('OnUnistall', Debug('SCHEDULER').onunistall);
+	try {
+		const response = await axios.get('https://openrouter.ai/api/v1/models', {
+			headers: {
+				'Authorization': `Bearer ${Token}`
+			}
+		});
+		const openRouterModels = response.data?.data || [];
+		const activeModels = openRouterModels.filter(m => !m.id.endsWith(':batch'));
 
-		global.io.emit('OnSpeed', Debug('SCHEDULER').onspeed);
-		global.io.emit('OnBlock', Debug('SCHEDULER').onblock);
-		global.io.emit('OnSupport', Debug('SCHEDULER').onsupport);
-		global.io.emit('Speed', Debug('SCHEDULER').speed);
-		global.io.emit('Block', Debug('SCHEDULER').block);
-		global.io.emit('Crontab', Debug('SCHEDULER').cron);
+		db.all("SELECT id, title, module FROM engine", [], (err, rows) => {
+			if (err || !rows) return;
 
+			rows.forEach(row => {
+				const titleQuery = String(row.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+				const moduleQuery = String(row.module || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-		global.io.emit('A001', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').before));
-		global.io.emit('A002', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').day));
-		global.io.emit('A003', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').later));
-		global.io.emit('A004', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').pay));
-		global.io.emit('A005', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').lock));
-		global.io.emit('A006', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').unlock));
-		global.io.emit('A007', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').maintenance));
-		global.io.emit('A008', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').unistall));
+				let matchedModel = null;
 
-		global.io.emit('A009', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').speed));
-		global.io.emit('A010', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').block));
-		global.io.emit('A011', emoji.emojify(Debug('MESSAGE', '*', 'ID', '1').support));
-
-		global.io.emit('B001', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').before));
-		global.io.emit('B002', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').day));
-		global.io.emit('B003', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').later));
-		global.io.emit('B004', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').pay));
-		global.io.emit('B005', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').lock));
-		global.io.emit('B006', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').unlock));
-		global.io.emit('B007', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').maintenance));
-		global.io.emit('B008', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').unistall));
-
-		global.io.emit('B009', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').speed));
-		global.io.emit('B010', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').block));
-		global.io.emit('B011', emoji.emojify(Debug('MESSAGE', '*', 'ID', '2').support));
-
-		global.io.emit('C001', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').before));
-		global.io.emit('C002', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').day));
-		global.io.emit('C003', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').later));
-		global.io.emit('C004', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').pay));
-		global.io.emit('C005', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').lock));
-		global.io.emit('C006', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').unlock));
-		global.io.emit('C007', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').maintenance));
-		global.io.emit('C008', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').unistall));
-
-		global.io.emit('C009', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').speed));
-		global.io.emit('C010', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').block));
-		global.io.emit('C011', emoji.emojify(Debug('MESSAGE', '*', 'ID', '3').support));
-		//
-		//		if ((Debug('EMOTIONS', '*', 'ALL')).length >= 1) {
-		//			var isEMOJI = [];
-		//			Debug('EMOTIONS', '*', 'ALL').some(function(TARGET, index) {
-		//				GetEmoji = {
-		//					"ID": TARGET.id,
-		//					"EMOJI": TARGET.emoji,
-		//					"KEY": TARGET.key,
-		//					"UNICODE": TARGET.unicode,
-		//					"HTML": TARGET.html,
-		//					"NAME": TARGET.name
-		//				};
-		//
-		//				isEMOJI.push(GetEmoji);
-		//				if (Debug('EMOTIONS', '*', 'ALL').length == (index + 1)) {
-		//					global.io.emit('Emoji', isEMOJI);
-		//				}
-		//			});
-		//		}
-		//
-		//
-		if ((Debug('TARGET', '*', 'ALL')).length >= 1) {
-			var isTARGET = [];
-			Debug('TARGET', '*', 'ALL').some(function(TARGET, index) {
-				if (TARGET.status == 'pending') {
-					Dataset('TARGET', '*', TARGET.id, 'DELETE');
-					Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
+				if (titleQuery.includes('grok') || moduleQuery.includes('grok')) {
+					matchedModel = activeModels.find(m => m.id.includes('grok-4.3')) ||
+						activeModels.find(m => m.id.includes('grok-4.5')) ||
+						activeModels.find(m => m.id.includes('grok-latest'));
+				} else if (titleQuery.includes('haiku') || titleQuery.includes('claude') || moduleQuery.includes('haiku')) {
+					matchedModel = activeModels.find(m => m.id.includes('claude-haiku-latest')) ||
+						activeModels.find(m => m.id.includes('claude-haiku-4.5')) ||
+						activeModels.find(m => m.id.includes('claude-haiku'));
 				} else {
-					if (TARGET.target == "900000000") {
-						TARGET.target = "(00) 0 0000-0000";
-					}
+					matchedModel = activeModels.find(m => {
+						const cleanApiId = m.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+						const cleanApiName = m.name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-					GetLog = {
-						"ID": TARGET.id,
-						"TITLE": TARGET.title,
-						"NAME": TARGET.client,
-						"START": TARGET.start,
-						"END": TARGET.end,
-						"TARGET": TARGET.target,
-						"STATUS": TARGET.status,
-					};
-					isTARGET.push(GetLog);
-					if (Debug('TARGET', '*', 'ALL').length <= (index + 1)) {
-						if (Boolean(Debug('OPTIONS').auth)) {
-							global.io.emit('getlog', true);
-							global.io.emit('setlog', isTARGET);
+						return (moduleQuery && cleanApiId.includes(moduleQuery)) ||
+							(moduleQuery && moduleQuery.includes(cleanApiId)) ||
+							cleanApiName.includes(titleQuery) ||
+							cleanApiId.includes(titleQuery);
+					});
+				}
 
-						}
+				if (!matchedModel && titleQuery) {
+					const candidates = activeModels.filter(m => {
+						const cleanId = m.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+						return cleanId.includes(titleQuery);
+					});
+
+					if (candidates.length > 0) {
+						candidates.sort((a, b) => {
+							const costA = parseFloat(a.pricing?.prompt || 0) + parseFloat(a.pricing?.completion || 0);
+							const costB = parseFloat(b.pricing?.prompt || 0) + parseFloat(b.pricing?.completion || 0);
+							return costA - costB;
+						});
+						matchedModel = candidates[0];
 					}
 				}
+
+				if (matchedModel && matchedModel.id !== row.module) {
+					db.run(
+						"UPDATE engine SET module = ? WHERE id = ?",
+						[matchedModel.id, row.id]
+					);
+				}
 			});
-
-		} else {
-			global.io.emit('getlog', false);
-		}
-
-		res.json({
-			Status: "Success",
-			Return: Debug('CONSOLE').right
 		});
+	} catch (error) {}
+}
 
+// Token
+app.post('/token', async (req, res) => {
+	const {
+		token: Token
+	} = req.body;
 
-	} else {
-		res.json({
+	if (![Password[0], Password[1]].includes(Token)) {
+		// Se errar a senha/token, garante que o painel fica bloqueado
+		isPanelAuthorized = false;
+		return res.json({
 			Status: "Fail",
 			Return: Debug('CONSOLE').wrong
 		});
 	}
+
+	const options = Debug('OPTIONS');
+	const mkauth = Debug('MKAUTH');
+	const scheduler = Debug('SCHEDULER');
+	const dateParts = DateTime().split('-');
+	const Engine = Debug('ENGINE', 'TITLE', 'MULTIPLE');
+	const Zone = Debug('LOCALZONE', 'UF', 'MULTIPLE');
+	if (options.keygen != null) {
+		const OpenRouter = await Openrout(options.keygen);
+		var Balance = '0,00';
+		var Charge = null;
+
+		if (OpenRouter && OpenRouter.financial) {
+			Charge = OpenRouter?.models?.find(m => m.title === options.engine);
+			Balance = OpenRouter.financial.balance_brl;
+		}
+
+	}
+
+
+	const AskBrains = await new Promise((resolve) => {
+		db.get("SELECT COUNT(*) AS total FROM intelligence", [], (err, row) => {
+			resolve(row ? row.total : 0);
+		});
+	});
+
+	const socketEvents = {
+		interval: options.interval,
+		sleep: options.sleep,
+		sendwait: options.sendwait,
+		response: options.response,
+		call: options.call,
+		access: options.access,
+		port: options.access,
+		pixfail: options.pixfail,
+		replyes: options.replyes,
+		alert: options.alert,
+		count: options.count,
+		onbot: options.onbot,
+		reject: options.reject,
+		limiter: options.limiter,
+		domain: mkauth.domain,
+		tunel: mkauth.tunel,
+		username: mkauth.client_id,
+		password: mkauth.client_secret,
+		module: mkauth.module,
+		bar: mkauth.bar,
+		pix: mkauth.pix,
+		qrpix: mkauth.qrpix,
+		qrlink: mkauth.qrlink,
+		pdf: mkauth.pdf,
+		delay: mkauth.delay,
+		iserver: mkauth.client_link,
+		webhook: mkauth.webhook,
+		whstatus: mkauth.whstatus,
+		imode: mkauth.mode,
+		debugger: options.debugger,
+		Tag: options.tag,
+		regex: options.regex,
+		onreboot: options.onreboot,
+		uptodate: Debug('RELEASE').isupdate,
+		protected: options.protect,
+		spam: mkauth.level,
+		backup: mkauth.backup,
+		aimbot: mkauth.aimbot,
+		doublekill: mkauth.prevent,
+		owner: mkauth.owner,
+		ismonth: dateParts[1],
+		isyear: dateParts[0],
+		issearch: 'all',
+		bfive: scheduler.bfive,
+		inday: scheduler.inday,
+		lfive: scheduler.lfive,
+		lten: scheduler.lten,
+		lfifteen: scheduler.lfifteen,
+		ltwenty: scheduler.ltwenty,
+		ltwentyfive: scheduler.ltwentyfive,
+		lthirty: scheduler.lthirty,
+		lthirtyfive: scheduler.lthirtyfive,
+		lforty: scheduler.lforty,
+		shift: scheduler.shift,
+		min: AddZero(scheduler.min),
+		max: scheduler.max,
+		sunday: scheduler.sunday,
+		monday: scheduler.monday,
+		tuesday: scheduler.tuesday,
+		wednesday: scheduler.wednesday,
+		thursday: scheduler.thursday,
+		friday: scheduler.friday,
+		saturday: scheduler.saturday,
+		morning: scheduler.morning,
+		afternoon: scheduler.afternoon,
+		night: scheduler.night,
+		OnPay: scheduler.onpay,
+		OnLock: scheduler.onlock,
+		OnUnlock: scheduler.onunlock,
+		OnMaintenance: scheduler.onmaintenance,
+		OnUnistall: scheduler.onunistall,
+		OnSpeed: scheduler.onspeed,
+		OnBlock: scheduler.onspeed,
+		OnSupport: scheduler.onsupport,
+		Speed: scheduler.speed,
+		Block: scheduler.block,
+		Crontab: scheduler.cron,
+		heartbeat: Boolean(options.heartdelay > 0),
+		heartdelay: options.heartdelay || 0,
+		engine: Engine,
+		zone: Zone,
+		AskToken: options.keygen,
+		AskIP: options.mwsmhost,
+		AskPort: options.mwsmport,
+		AskMode: options.aimode,
+		AskCLI: options.prompt,
+		Threshold: options.threshold,
+		AskTimeout: options.aitimeout,
+		AskLedge: options.maxknowledge,
+		AskEngine: options.engine || '00',
+		AskZone: options.timezone || '00',
+		AskBalance: Balance,
+		AskInput: Charge?.input_cost_brl || '0,00',
+		AskOutput: Charge?.output_cost_brl || '0,00',
+		AskBrain: AskBrains,
+		AskModule: Debug('ENGINE', 'ACTIVE', 'DIRECT', options.engine)?.active
+	};
+
+	for (const [event, value] of Object.entries(socketEvents)) {
+		global.io.emit(event, value);
+	}
+
+	['1', '2', '3'].forEach((id, idx) => {
+		const prefix = ['A', 'B', 'C'][idx];
+		const msgData = Debug('MESSAGE', '*', 'ID', id);
+
+		const keys = ['before', 'day', 'later', 'pay', 'lock', 'unlock', 'maintenance', 'unistall', 'speed', 'block', 'support'];
+		keys.forEach((key, index) => {
+			const code = `${prefix}${String(index + 1).padStart(3, '0')}`;
+			global.io.emit(code, emoji.emojify(msgData[key]));
+		});
+	});
+
+	const targetsList = Debug('TARGET', '*', 'ALL').sort((a, b) => b.id - a.id);
+
+	if (!targetsList || targetsList.length === 0) {
+		global.io.emit('getlog', false);
+	} else {
+		const isTARGET = targetsList.reduce((acc, TARGET) => {
+			if (TARGET.status === 'pending') {
+				Dataset('TARGET', '*', TARGET.id, 'DELETE');
+				Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
+				return acc;
+			}
+
+			let targetFormatted = TARGET.target;
+			if (targetFormatted === "900000000") {
+				targetFormatted = "(00) 0 0000-0000";
+			} else {
+				let t = String(targetFormatted || '').replace(/\D/g, '');
+				if (t.length === 11) {
+					targetFormatted = `(${t.slice(0, 2)}) ${t.slice(2, 3)} ${t.slice(3, 7)}-${t.slice(7)}`;
+				} else if (t.length === 10) {
+					targetFormatted = `(${t.slice(0, 2)}) ${t.slice(2, 6)}-${t.slice(6)}`;
+				}
+			}
+
+			acc.push({
+				"ID": TARGET.id,
+				"TITLE": TARGET.title,
+				"NAME": TARGET.client,
+				"START": TARGET.start,
+				"END": TARGET.end,
+				"TARGET": targetFormatted,
+				"STATUS": TARGET.status,
+			});
+
+			return acc;
+		}, []);
+
+		if (Boolean(options.auth)) {
+			global.io.emit('getlog', true);
+			global.io.emit('setlog', isTARGET);
+		}
+	}
+
+	// Login bem-sucedido: libera o acesso ao painel
+	isPanelAuthorized = true;
+
+	res.json({
+		Status: "Success",
+		Return: Debug('CONSOLE').right
+	});
 });
 
 // Set Options Mkauth
 app.post('/options_mkauth', (req, res) => {
-	const define = req.body.define;
-	const enable = req.body.enable;
-	db.run("UPDATE mkauth SET " + define + "=?", [enable], (err) => {
+	const {
+		define,
+		enable
+	} = req.body;
+	const currentValue = Debug('MKAUTH')[define];
+
+	db.run(`UPDATE mkauth SET ${define} = ?`, [enable], (err) => {
 		if (err) {
-			res.json({
+			return res.json({
 				Status: "Fail",
-				Return: Debug('MKAUTH').define
+				Return: currentValue
 			});
 		}
 		res.json({
@@ -2982,175 +3821,354 @@ app.post('/options_mkauth', (req, res) => {
 
 // Set Scheduler Mkauth
 app.post('/scheduler', (req, res) => {
-	const define = (req.body.define).toLowerCase();
+	const define = req.body.define.toLowerCase();
 	const enable = req.body.enable;
-	db.run("UPDATE scheduler SET " + define + "=?", [enable], (err) => {
+	const schedulerData = Debug('SCHEDULER');
+
+	db.run(`UPDATE scheduler SET ${define} = ?`, [enable], (err) => {
 		if (err) {
-			res.json({
+			return res.json({
 				Status: "Fail",
-				Return: Debug('SCHEDULER').define
+				Return: schedulerData[define]
 			});
 		}
 		res.json({
 			Status: "Success",
 			Return: enable,
-			Option: Debug('SCHEDULER').speed
+			Option: schedulerData.speed
+		});
+	});
+});
+
+
+// Intelligence Clean
+app.post('/intelligence', async (req, res) => {
+	try {
+		await dbQuery.run(`DELETE FROM intelligence`);
+
+		try {
+			await broadcastPanelStats();
+		} catch (e) {}
+
+		return res.json({
+			Status: "Success",
+			Return: Debug('CONSOLE').cleanon
+		});
+	} catch (err) {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').cleanoff
+		});
+	}
+});
+
+// Set Heartbeat Options
+app.post('/heartbeat', (req, res) => {
+	const heartdelay = parseInt(req.body.heartdelay, 10) || 0;
+	const newHeartbeat = heartdelay > 0 ? 1 : 0;
+	const oldHeartbeat = Boolean(Debug('OPTIONS').heartbeat);
+
+	db.run(`UPDATE options SET heartbeat = ?, heartdelay = ?`, [newHeartbeat, heartdelay], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Message: err.message
+			});
+		}
+
+		Debug('OPTIONS').heartbeat = newHeartbeat;
+		Debug('OPTIONS').heartdelay = heartdelay;
+
+		if (oldHeartbeat !== Boolean(newHeartbeat)) {
+			const appName = Debug('OPTIONS').appname;
+			const consoleMsg = newHeartbeat ? Debug('CONSOLE').hearton : Debug('CONSOLE').heartoff;
+
+			if (consoleMsg) {
+				const formatted = `> ${appName} : ${consoleMsg}`;
+				console.log(formatted);
+				io.emit('message', formatted);
+			}
+		}
+
+		res.json({
+			Status: "Success",
+			heartbeat: Boolean(newHeartbeat),
+			heartdelay: heartdelay
+		});
+	});
+});
+
+// Get Clients Mkauth
+app.post('/clients_mkauth', async (req, res) => {
+	const {
+		year: Year,
+		month: Month,
+		payment: Payment
+	} = req.body;
+	const currentYear = DateTime().split(" ")[0].split("-")[0];
+	const Findex = `${currentYear - Year}-${Month}`;
+
+	const Master = await MkAuth(Findex, Payment, 'list');
+
+	if (!Master || Master.Status === "Error") {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').request
+		});
+	}
+
+	const hasTARGET = Master.map((TARGET) => {
+		const contact = TARGET.Contact ? String(TARGET.Contact).replace(/[^0-9.]+/g, '') : "00000000000";
+
+		let status, push;
+		try {
+			const storageData = Debug("STORANGE", "*", "DIRECT", TARGET.Identifier);
+			status = storageData?.status;
+			push = storageData?.push;
+		} catch (e) {
+			status = undefined;
+			push = undefined;
+		}
+
+		return {
+			"ORDER": TARGET.Order,
+			"TITLE": TARGET.Identifier,
+			"USER": TARGET.Connect,
+			"MAIN": TARGET.Authority,
+			"CLIENT": TARGET.Client,
+			"CONTACT": contact,
+			"REWARD": TARGET.Reward,
+			"PUSH": push,
+			"PAYMENT": TARGET.Payment,
+			"STATUS": status,
+			"CASH": TARGET.Cash,
+			"GATEWAY": TARGET.Gateway
+		};
+	});
+
+	if (Boolean(Debug('OPTIONS').auth)) {
+		global.io.emit('getclients', hasTARGET);
+	}
+
+	res.json({
+		Status: "Success",
+		Return: Debug('CONSOLE').successfully
+	});
+});
+
+
+// Delay Mkauth
+app.post('/delay_mkauth', (req, res) => {
+	const {
+		range
+	} = req.body;
+	const currentDelay = Debug('MKAUTH').delay;
+
+	if (currentDelay == range) {
+		return res.json({
+			Status: "Success",
+			Return: range
+		});
+	}
+
+	db.run("UPDATE mkauth SET delay = ?", [range], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: currentDelay
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: range
+		});
+	});
+});
+
+
+// Scheduler
+app.post('/scheduler_mkauth', async (req, res) => {
+	const exUpdate = await link.prepare('SELECT * FROM scheduling WHERE process = ?').all("wait");
+
+	if (!exUpdate || exUpdate.length === 0) {
+		return res.json({
+			Status: "Fail"
+		});
+	}
+
+	const isSHED = exUpdate.map((Send) => ({
+		"TITLE": Send.title,
+		"CLIENT": Send.authority || Send.client,
+		"REWARD": Send.reward
+	}));
+
+	global.io.emit('shedullers', isSHED);
+
+	res.json({
+		Status: "Success"
+	});
+});
+
+
+app.post('/spam_mkauth', async (req, res) => {
+	const {
+		clients,
+		token
+	} = req.body;
+
+	if (!clients || !Array.isArray(clients) || clients.length === 0) {
+		return res.status(400).json({
+			Status: "Fail",
+			Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error,
+			RPush: DateTime(),
+			RStatus: "Fail",
+			RCode: null
+		});
+	}
+
+	let totalSuccess = 0;
+	let totalIgnored = 0;
+	let totalFail = 0;
+	let lastCode = clients[clients.length - 1]?.code || null;
+
+	for (const clientData of clients) {
+		try {
+			const payload = {
+				client: clientData.client,
+				name: clientData.authority,
+				user: clientData.user,
+				code: clientData.code,
+				status: clientData.status,
+				payment: clientData.payment,
+				reward: clientData.reward,
+				contact: clientData.contact,
+				push: clientData.push,
+				cash: clientData.cash,
+				gateway: clientData.gateway,
+				token: token,
+				priority: 1,
+				headshot: true
+			};
+
+			const result = await ProcessMkAuthMessage(payload);
+
+			let rPush = DateTime();
+
+			if (result.Status === "Success") {
+				totalSuccess++;
+				let rStatus = result.RStatus || "Sent";
+
+				if (global.io) {
+					global.io.emit('spam_status', {
+						code: clientData.code,
+						RPush: rPush,
+						RStatus: rStatus
+					});
+				}
+
+			} else if (result.Status === "Ignored") {
+				totalIgnored++;
+
+				if (global.io) {
+					global.io.emit('spam_status', {
+						code: clientData.code,
+						RPush: rPush,
+						RStatus: "Fail"
+					});
+				}
+
+			} else {
+				totalFail++;
+
+				if (global.io) {
+					global.io.emit('spam_status', {
+						code: clientData.code,
+						RPush: rPush,
+						RStatus: "Fail"
+					});
+				}
+			}
+
+		} catch (err) {
+			totalFail++;
+
+			if (global.io) {
+				global.io.emit('spam_status', {
+					code: clientData.code,
+					RPush: DateTime(),
+					RStatus: "Fail"
+				});
+			}
+		}
+	}
+
+	if (totalIgnored === clients.length) {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').reason,
+			RPush: DateTime(),
+			RStatus: "Fail",
+			RCode: lastCode
+		});
+	}
+
+	if (totalSuccess > 0) {
+		return res.json({
+			Status: "Success",
+			Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queue,
+			RPush: DateTime(),
+			RStatus: "Sent",
+			RCode: lastCode
+		});
+	}
+
+	return res.json({
+		Status: "Fail",
+		Return: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error,
+		RPush: DateTime(),
+		RStatus: "Fail",
+		RCode: lastCode
+	});
+});
+
+// Save Mkauth Messages
+app.post('/message_mkauth', (req, res) => {
+	const {
+		database: define,
+		message,
+		token,
+		select
+	} = req.body;
+
+	if (![Password[0], Password[1]].includes(Token)) {
+		return res.json({
+			Status: "Fail"
+		});
+	}
+
+	if (!server || !message) {
+		return res.json({
+			Status: "Fail"
+		});
+	}
+
+	db.run(`UPDATE message SET ${define} = ? WHERE id = ?`, [message, select], (err) => {
+		if (err) {
+			return res.json({
+				Status: "Fail",
+				Return: Debug('CONSOLE').datafail
+			});
+		}
+		res.json({
+			Status: "Success",
+			Return: Debug('CONSOLE').datasave
 		});
 	});
 });
 
 
 
-// Get Clients Mkauth
-app.post('/clients_mkauth', async (req, res) => {
-	const Year = req.body.year;
-	const Month = req.body.month;
-	const Payment = req.body.payment;
-	const Findex = (((DateTime()).split(" ")[0]).split("-")[0] - Year) + '-' + Month;
-	const Master = await MkAuth(Findex, Payment, 'list');
-	var hasTARGET = [];
-	var PUSH, STATUS;
-	if (await Master.Status == "Error" || !Master) {
-		return res.json({
-			Status: "Fail",
-			Return: Debug('CONSOLE').request
-		});
-	} else {
-		(await Master).someAsync(async (TARGET) => {
-			if (TARGET.Contact != undefined) {
-				TARGET.Contact = (TARGET.Contact).replace(/[^0-9\\.]+/g, '');
-			} else {
-				TARGET.Contact = "00000000000";
-			}
-			try {
-				TARGET.status = Debug("STORANGE", "*", "DIRECT", TARGET.Identifier).status;
-			} catch (e) {
-				TARGET.status = undefined;
-			}
 
-			try {
-				TARGET.push = Debug("STORANGE", "*", "DIRECT", TARGET.Identifier).push;
-			} catch (e) {
-				TARGET.push = undefined;
-			}
-			GetClients = {
-				"ORDER": TARGET.Order,
-				"TITLE": TARGET.Identifier,
-				"USER": TARGET.Connect,
-				"CLIENT": TARGET.Client,
-				"CONTACT": TARGET.Contact,
-				"REWARD": TARGET.Reward,
-				"PUSH": TARGET.push,
-				"PAYMENT": TARGET.Payment,
-				"STATUS": TARGET.status,
-				"CASH": TARGET.Cash,
-				"GATEWAY": TARGET.Gateway
-			};
-			hasTARGET.push(GetClients);
-			if (Master.length == hasTARGET.length) {
-				if (Boolean(Debug('OPTIONS').auth)) {
-					global.io.emit('getclients', hasTARGET);
-					return res.json({
-						Status: "Success",
-						Return: Debug('CONSOLE').successfully
-					});
-
-				}
-			}
-
-		});
-
-	}
-});
-
-
-// Delay Mkauth
-app.post('/delay_mkauth', (req, res) => {
-	const range = req.body.range;
-	if (Debug('MKAUTH').delay != range) {
-		db.run("UPDATE mkauth SET delay=?", [range], (err) => {
-			if (err) {
-				res.json({
-					Status: "Fail",
-					Return: Debug('MKAUTH').delay
-				});
-			}
-			res.json({
-				Status: "Success",
-				Return: range
-			});
-		});
-	}
-});
-
-
-
-// Scheduler
-app.post('/scheduler_mkauth', async (req, res) => {
-	var isSHED = [];
-	const exUpdate = await link.prepare('SELECT * FROM scheduling WHERE process=?').all("wait");
-	if (exUpdate.length >= 1) {
-		exUpdate.some(function(Send, index) {
-			GetSHED = {
-				"TITLE": Send.title,
-				"CLIENT": Send.client,
-				"REWARD": Send.reward
-			};
-			isSHED.push(GetSHED);
-			if (exUpdate.length == (index + 1)) {
-				global.io.emit('shedullers', isSHED);
-				res.json({
-					Status: "Success"
-				});
-			}
-		});
-	} else {
-		res.json({
-			Status: "Fail"
-		});
-	}
-});
-
-
-
-
-// Save Mkauth Messages
-app.post('/message_mkauth', (req, res) => {
-	const define = req.body.database
-	const message = req.body.message
-	const token = req.body.token
-	const select = req.body.select
-	if ([Debug('OPTIONS').token, Password[1]].includes(token)) {
-		if (server != "" && message != "") {
-			db.run("UPDATE message SET " + define + "=? WHERE id=?", [message, select], (err) => {
-				if (err) {
-					res.json({
-						Status: "Fail",
-						Return: Debug('CONSOLE').datafail
-					});
-				}
-				res.json({
-					Status: "Success",
-					Return: Debug('CONSOLE').datasave
-				});
-			});
-		} else {
-			res.json({
-				Status: "Fail"
-			});
-
-		}
-	} else {
-		res.json({
-			Status: "Fail"
-		});
-	}
-
-});
-
-
-
-// Update SQLite
 app.post('/sqlite-options', (req, res) => {
 	const Interval = req.body.interval;
 	const Sleep = req.body.sleep;
@@ -3166,51 +4184,62 @@ app.post('/sqlite-options', (req, res) => {
 	const Count = req.body.count;
 	const Token = req.body.token;
 	const Limiter = req.body.limiter;
-	if (Access != Debug('OPTIONS').access) {
-		Reboot = true;
-	} else {
-		Reboot = false;
-	}
+
+	const Reboot = (Access != Debug('OPTIONS').access);
+
 	if (Response == "") {
 		Response = Debug('OPTIONS').response;
 	}
-	if ([Debug('OPTIONS').token, Password[1]].includes(Token)) {
-		if (Interval != "" && Sleep != "" && Sendwait != "" && Access != "" && Pixfail != "" && Count != "" && Limiter != "") {
-			db.run("UPDATE options SET interval=?, sendwait=?, access=?, pixfail=?, response=?, replyes=?, onbot=?, count=?, limiter=?, sleep=?,  call=?,  reject=?,  alert=?", [Interval, Sendwait, Access, Pixfail, Response, Replyes, Onbot, Count, Limiter, Sleep, Call, Reject, Alert], (err) => {
+
+	if (![Password[0], Password[1]].includes(Token)) {
+		if (!res.headersSent) {
+			return res.json({
+				Status: "Fail",
+				Return: Debug('CONSOLE').wrong
+			});
+		}
+		return;
+	}
+
+	if (Interval != "" && Sleep != "" && Sendwait != "" && Access != "" && Pixfail != "" && Count != "" && Limiter != "") {
+		db.run(
+			"UPDATE options SET interval=?, sendwait=?, access=?, pixfail=?, response=?, replyes=?, onbot=?, count=?, limiter=?, sleep=?, call=?, reject=?, alert=?",
+			[Interval, Sendwait, Access, Pixfail, Response, Replyes, Onbot, Count, Limiter, Sleep, Call, Reject, Alert],
+			(err) => {
+				if (res.headersSent) return;
+
 				if (err) {
-					res.json({
+					return res.json({
 						Status: "Fail",
 						Return: Debug('CONSOLE').failed
 					});
 				}
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').settings);
+
 				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').settings);
+
 				res.json({
 					Status: "Success",
 					Return: Debug('CONSOLE').settings,
 					Port: Access
 				});
+
 				session = false;
+
 				if (Reboot) {
 					global.io.emit('Reset', true);
 					delay(0).then(async function() {
 						await exec('npm run restart:mwsm');
 					});
 				}
-			});
-
-		} else {
-			res.json({
+			}
+		);
+	} else {
+		if (!res.headersSent) {
+			return res.json({
 				Status: "Fail",
 				Return: Debug('CONSOLE').unnamed
 			});
 		}
-
-	} else {
-		res.json({
-			Status: "Fail",
-			Return: Debug('CONSOLE').wrong
-		});
 	}
 });
 
@@ -3222,62 +4251,28 @@ app.get('/mikrotik/:pass/:to/:msg', async (req, res) => {
 		pass
 	} = req.params;
 
-	var isHid;
+	let isHid;
 	if (Boolean(Debug('OPTIONS').protect)) {
-		isHid = (pass);
+		isHid = pass;
 	} else {
-		if ((Debug('OPTIONS').token == "" || Debug('OPTIONS').protect == undefined)) {
-			isHid = Password[1];
-		} else {
-			isHid = (Debug('OPTIONS').token);
-		}
+		isHid = (!Debug('OPTIONS').token || Debug('OPTIONS').protect === undefined) ?
+			Password[1] :
+			Debug('OPTIONS').token;
 	}
 
-	Json = {
+	const Json = JSON.stringify({
 		"Mwsm": "/mikrotik",
 		"Main": "Mikrotik",
 		"Start": DateTime()
-	};
-	if (typeof Json === 'object') {
-		Json = JSON.stringify(Json);
-	}
+	});
 	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
 
-
-	var isWid = (to);
-	if (validPhone(Playground)) {
-		isWid = '55' + Playground;
+	let Contact = DDISet(to);
+	if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+		Contact = DDISet(Playground);
 	}
-	const isDDI = isWid.substr(0, 2);
-	const isDDD = isWid.substr(2, 2);
-	const isCall = isWid.slice(-8);
-	var WhatsApp = isWid + '@c.us';
-	if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-		WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-	} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-		WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
-	}
-	const Mensagem = (msg);
 
-	if ([Debug('OPTIONS').token, Password[1]].includes(isHid) && validPhone(isWid)) {
-		setTimeout(function() {
-			client.sendMessage(WhatsApp, Mensagem).then(response => {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
-				return res.json({
-					Status: "Success",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
-				});
-			}).catch(err => {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-				return res.status(500).json({
-					Status: "Fail",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-				});
-				WwjsVersion(false);
-			});
-
-		}, Math.floor(Debug('OPTIONS').interval + Math.random() * 1000));
-	} else {
+	if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !validPhone(Contact)) {
 		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
 		return res.status(500).json({
 			Status: "Fail",
@@ -3285,6 +4280,36 @@ app.get('/mikrotik/:pass/:to/:msg', async (req, res) => {
 		});
 	}
 
+	try {
+		const numberDetails = await client.getNumberId(Contact);
+		if (!numberDetails) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail);
+			return res.status(400).json({
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail
+			});
+		}
+		const WhatsApp = numberDetails._serialized;
+
+		const interval = Math.floor((Debug('OPTIONS').interval || 1000) + Math.random() * 1000);
+		await new Promise(resolve => setTimeout(resolve, interval));
+
+		await client.sendMessage(WhatsApp, msg);
+
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
+		return res.json({
+			Status: "Success",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
+		});
+
+	} catch (err) {
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error, err);
+		WwjsVersion(false);
+		return res.status(500).json({
+			Status: "Fail",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+		});
+	}
 });
 
 
@@ -3296,9 +4321,7 @@ app.post('/force-message', [
 ], async (req, res) => {
 	const errors = validationResult(req).formatWith(({
 		msg
-	}) => {
-		return msg;
-	});
+	}) => msg);
 
 	if (!errors.isEmpty()) {
 		return res.status(422).json({
@@ -3307,7 +4330,7 @@ app.post('/force-message', [
 		});
 	}
 
-	Json = {
+	let Json = {
 		"Mwsm": "/force-message",
 		"Main": "Mwsm",
 		"Start": DateTime()
@@ -3316,7 +4339,6 @@ app.post('/force-message', [
 		Json = JSON.stringify(Json);
 	}
 	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
-
 
 	var isHid;
 	if (Boolean(Debug('OPTIONS').protect)) {
@@ -3335,193 +4357,485 @@ app.post('/force-message', [
 		}
 	}
 
-	var Contact = req.body.to;
-	if (validPhone(Playground)) {
-		Contact = '55' + Playground;
+	var Contact = DDISet(req.body.to);
+	if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+		Contact = DDISet(Playground);
 	}
-	const isWid = (Contact).replace(/[^0-9\\.]+/g, '');
-	const isDDI = isWid.substr(0, 2);
-	const isDDD = isWid.substr(2, 2);
-	const isCall = isWid.slice(-8);
-	var WhatsApp = isWid + '@c.us';
-	if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-		WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-	} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-		WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
+
+	if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !validPhone(Contact)) {
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+		return res.status(401).json({
+			Status: "Fail",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+		});
 	}
-	const Mensagem = (req.body.msg).replaceAll("\\n", "\r\n").split("##");
 
-	const Reconstructor = new Promise((resolve, reject) => {
-		if (Mensagem.some(Rows => Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Rows.includes(Row)))) {
-			var Array = {};
-			Mensagem.some(function(Send, index) {
-				if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))) {
-					const Cloud = async () => {
-						let mimetype;
-						const attachment = await axios.get(Url, {
-							responseType: 'arraybuffer'
-						}).then(response => {
-							mimetype = response.headers['content-type'];
-							return response.data.toString('base64');
-						});
-						return new MessageMedia(mimetype, attachment, 'Media');
-					};
-
-
-					console.log(WhatsApp + " - " + Mensagem);
-
-					Cloud(Send).then(Return => {
-						Array[Send] = Return;
-						resolve(Array);
-					}).catch(err => {
-						resolve(undefined);
-					});
-				}
+	try {
+		const numberDetails = await client.getNumberId(Contact);
+		if (!numberDetails) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail);
+			return res.status(400).json({
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail
 			});
-		} else {
-			resolve(undefined);
 		}
-	});
+		var WhatsApp = numberDetails._serialized;
 
-	delay(0).then(async function() {
-		const Retorno = await Promise.all([Reconstructor]);
+		const Mensagem = (req.body.msg).replaceAll("\\n", "\r\n").split("##");
+		const Reconstructor = new Promise(async (resolve) => {
+			const mediaItems = Mensagem.filter(Send =>
+				Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))
+			);
+
+			if (mediaItems.length > 0) {
+				var ArrayData = {};
+
+				const Cloud = async (mediaUrl) => {
+					let mimetype;
+					const attachment = await axios.get(mediaUrl, {
+						responseType: 'arraybuffer'
+					}).then(response => {
+						mimetype = response.headers['content-type'];
+						return response.data.toString('base64');
+					});
+					return new MessageMedia(mimetype, attachment, 'Media');
+				};
+
+				await Promise.all(
+					mediaItems.map(async (Send) => {
+						try {
+							ArrayData[Send] = await Cloud(Send);
+						} catch (err) {
+							console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').mediafail);
+						}
+					})
+				);
+
+				resolve(ArrayData);
+			} else {
+				resolve(undefined);
+			}
+		});
+
+		const Retorno = await Reconstructor;
 		var Assembly = [];
-		var Sending = 1;
-		Mensagem.some(function(Send, index) {
+
+		Mensagem.forEach(function(Send) {
 			if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))) {
-				if (Retorno[0].hasOwnProperty(Send)) {
-					Assembly.push(Retorno[0][Send]);
+				if (Retorno && Retorno.hasOwnProperty(Send)) {
+					Assembly.push(Retorno[Send]);
 				}
 			} else {
 				Assembly.push(Send);
 			}
 		});
-		Assembly.some(function(Send, index) {
-			setTimeout(function() {
 
-				var Preview = false;
-				var Caption = "Media";
+		const interval = Debug('OPTIONS').interval || 1000;
 
-				if ([Debug('OPTIONS').token, Password[1]].includes(isHid) && validPhone(isWid)) {
-					client.sendMessage(WhatsApp, isEmoji(Send), {
-						caption: Caption,
-						linkPreview: Preview
-					}).then(response => {
-						Wait = WhatsApp;
-						Sending = (Sending + 1);
-					}).catch(err => {
-						console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-						return res.json({
-							Status: "Fail",
-							message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-						});
-						WwjsVersion(false);
-					});
-				} else {
-					console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-					return res.json({
-						Status: "Fail",
-						message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-					});
-				}
+		for (let i = 0; i < Assembly.length; i++) {
+			const item = Assembly[i];
+			var Preview = false;
+			var Caption = "Media";
 
-				if (Sending >= Assembly.length) {
-					console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
-					return res.json({
-						Status: "Success",
-						message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
-					});
-				}
-			}, index * Debug('OPTIONS').interval);
-		});
-	});
-});
-
-// Link Mkauth
-app.post('/link_mkauth', async (req, res) => {
-	const User = req.body.username;
-	const Pass = req.body.password;
-	const Domain = req.body.domain;
-	const Tunel = req.body.tunel;
-	const Module = req.body.module;
-	const Token = req.body.token;
-	const Server = req.body.server;
-	const Mode = req.body.mode;
-	var iServer;
-
-	if (Server == "tunel") {
-		iServer = Tunel;
-	} else if (Server == "domain") {
-		iServer = Domain;
-	}
-
-	var ConnAuth, ResAuth;
-	if ([Debug('OPTIONS').token, Password[1]].includes(Token)) {
-		const Authentication = await axios.get('https://' + iServer + '/api/', {
-			auth: {
-				username: User,
-				password: Pass
-			}
-		}).then(response => {
-			return response.data;
-		}).catch(err => {
-			return false;
-		});
-		ConnAuth = false;
-		ResAuth = false;
-		if (Authentication) {
-			ConnAuth = true;
-			const MkSync = await axios.get('https://' + iServer + '/api/titulo/listar/limite=1&pagina=1', {
-				headers: {
-					'Authorization': 'Bearer ' + Authentication
-				}
-			}).then(response => {
-				return response.data;
-			}).catch(err => {
-				return false;
+			await client.sendMessage(WhatsApp, isEmoji(item), {
+				caption: Caption,
+				linkPreview: Preview
 			});
 
-			if ((MkSync.error == undefined)) {
-				ResAuth = true;
-				db.run("UPDATE mkauth SET client_id=?, client_secret=?, domain=?, tunel=?, mode=?, module=?, client_link=?", [User, Pass, Domain, Tunel, Mode, Module, Server], (err) => {
-					if (err) {
-						res.json({
-							Status: "Fail",
-							Return: Debug('CONSOLE').failed
-						});
-					}
-					res.json({
-						Status: "Success",
-						Return: Debug('CONSOLE').mksuccess
-					});
-				});
-			} else {
-				res.json({
-					Status: "Fail",
-					Return: Debug('CONSOLE').refused
-				});
+			if (i < Assembly.length - 1) {
+				await new Promise(resolve => setTimeout(resolve, interval));
 			}
-		} else {
-			res.json({
+		}
+
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
+		return res.json({
+			Status: "Success",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
+		});
+
+	} catch (err) {
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error, err);
+		return res.status(500).json({
+			Status: "Fail",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+		});
+	}
+});
+
+
+
+
+// WebHook
+app.post('/WebHook', async (req, res) => {
+	const {
+		secret: Secret,
+		status: RawStatus,
+		token: Token
+	} = req.body;
+
+	if (![Password[0], Password[1]].includes(Token)) {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').wrong
+		});
+	}
+
+	let isStatusActive = false;
+	try {
+		isStatusActive = Boolean(JSON.parse(RawStatus));
+	} catch (e) {
+		isStatusActive = Boolean(RawStatus) && RawStatus !== 'false' && RawStatus !== '0';
+	}
+
+	if (!isStatusActive) {
+		try {
+			await Dataset('MKAUTH', 'WEBHOOK', '', 'UPDATE');
+			await Dataset('MKAUTH', 'WHSTATUS', 'false', 'UPDATE');
+
+			return res.json({
+				Status: "Success",
+				Return: Debug('CONSOLE').settings
+			});
+		} catch (dataErr) {
+			return res.json({
+				Status: "Fail",
+				Return: Debug('CONSOLE').failed
+			});
+		}
+	}
+
+	if (!Secret || Secret.trim() === '') {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').wrong
+		});
+	}
+
+	const WebhookURL = `${req.protocol}://${req.get('host')}/webhook/mkauth`;
+
+	let ConnAuth = false;
+	let ResAuth = false;
+
+	try {
+		const testPayload = JSON.stringify({
+			event: 'ping',
+			test: true
+		});
+		const signature = crypto
+			.createHmac('sha256', Secret)
+			.update(testPayload)
+			.digest('hex');
+
+		const testResponse = await axios.post(WebhookURL, testPayload, {
+			headers: {
+				'Content-Type': 'application/json',
+				'x-webhook-signature': signature
+			},
+			timeout: 5000
+		}).catch((axiosErr) => {
+			return null;
+		});
+
+		if (!testResponse || testResponse.status !== 200) {
+			Terminal({
+				WebHook: [{
+					Authentication: "false",
+					Communication: "false"
+				}]
+			});
+
+			return res.json({
+				Status: "Fail",
+				Return: Debug('CONSOLE').refused
+			});
+		}
+
+		ConnAuth = true;
+
+		if (testResponse.data && (testResponse.data.status === 'Success' || testResponse.data.status === 'ignored')) {
+			ResAuth = true;
+		}
+
+		if (!ResAuth) {
+			return res.json({
 				Status: "Fail",
 				Return: Debug('CONSOLE').mkfail
 			});
 		}
-		JDebug = {
-			"MkAuth": [{
-				"Authentication": "" + ConnAuth + "",
-				"Communication": "" + ResAuth + ""
+
+		await Dataset('MKAUTH', 'WEBHOOK', Secret, 'UPDATE');
+		await Dataset('MKAUTH', 'WHSTATUS', 'true', 'UPDATE');
+
+		Terminal({
+			WebHook: [{
+				Authentication: String(ConnAuth),
+				Communication: String(ResAuth)
 			}]
-		};
-		Terminal(JDebug);
+		});
+
+		return res.json({
+			Status: "Success",
+			Return: Debug('CONSOLE').mksuccess
+		});
+
+	} catch (err) {
+		Terminal({
+			WebHook: [{
+				Authentication: String(ConnAuth),
+				Communication: String(ResAuth)
+			}]
+		});
+
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').failed
+		});
+	}
+});
+
+
+app.post('/engine', async (req, res) => {
+	const Token = req.body?.token || req.headers?.authorization;
+
+	if ([Password[0], Password[1]].includes(Token)) {
+		try {
+			const {
+				keygen,
+				engine
+			} = req.body;
+
+			if (!engine) {
+				return res.json({
+					Status: "Fail"
+				});
+			}
+			const success = await broadcastPanelStats(engine, keygen || null);
+
+			if (!success) {
+				return res.json({
+					Status: "Fail"
+				});
+			}
+
+			return res.json({
+				Status: "Success"
+			});
+
+		} catch (err) {
+			return res.json({
+				Status: "Fail"
+			});
+		}
 	} else {
-		res.json({
+		return res.json({
+			Status: "Fail"
+		});
+	}
+});
+
+// Endpoint Ask AI
+app.post('/askai', async (req, res) => {
+	const {
+		keygen,
+		mwsmhost,
+		mwsmport,
+		aimode,
+		uf,
+		prompt,
+		threshold,
+		aitimeout,
+		maxknowledge,
+		engine,
+		active,
+		token: Token
+	} = req.body;
+
+	if (![Password[0], Password[1]].includes(Token)) {
+		return res.json({
 			Status: "Fail",
 			Return: Debug('CONSOLE').wrong
 		});
+	}
 
+	const isActive = String(active) === 'true' || active === true || active === 1;
+
+	if (!isActive) {
+		db.run("UPDATE engine SET active = 0", [], (err) => {
+			if (err) {
+				return res.json({
+					Status: "Fail",
+					Return: Debug('CONSOLE').failed
+				});
+			}
+			return res.json({
+				Status: "Success",
+				Return: Debug('CONSOLE').openrouter
+			});
+		});
+		return;
+	}
+
+	try {
+		const updateOptionsQuery = `
+			UPDATE options 
+			SET keygen = ?, mwsmhost = ?, mwsmport = ?, aimode = ?, timezone = ?, prompt = ?, threshold = ?, aitimeout = ?, maxknowledge = ?, engine = ?
+		`;
+
+		db.run(
+			updateOptionsQuery,
+			[keygen, mwsmhost, mwsmport, aimode, uf, prompt, threshold, aitimeout, maxknowledge, engine],
+			function(err) {
+				if (err) {
+					return res.json({
+						Status: "Fail",
+						Return: Debug('CONSOLE').failed
+					});
+				}
+
+				db.run("UPDATE engine SET active = 0", [], function(err) {
+					if (err) {
+						return res.json({
+							Status: "Fail",
+							Return: Debug('CONSOLE').failed
+						});
+					}
+
+					db.run("UPDATE engine SET active = 1 WHERE title = ?", [engine], function(err) {
+						if (err) {
+							return res.json({
+								Status: "Fail",
+								Return: Debug('CONSOLE').failed
+							});
+						}
+
+						return res.json({
+							Status: "Success",
+							Return: Debug('CONSOLE').openrouter
+						});
+					});
+				});
+			}
+		);
+	} catch (err) {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').failed
+		});
 	}
 });
+
+
+// Link Mkauth
+app.post('/link_mkauth', async (req, res) => {
+	const {
+		username: User,
+		password: Pass,
+		domain: Domain,
+		tunel: Tunel,
+		module: Module,
+		token: Token,
+		server: Server,
+		mode: Mode
+	} = req.body;
+
+	if (![Password[0], Password[1]].includes(Token)) {
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').wrong
+		});
+	}
+
+	const iServer = Server === "tunel" ? Tunel : Domain;
+
+	let ConnAuth = false;
+	let ResAuth = false;
+
+	try {
+		const authResponse = await axios.get(`https://${iServer}/api/`, {
+			auth: {
+				username: User,
+				password: Pass
+			}
+		}).catch(() => null);
+
+		const Authentication = authResponse?.data;
+
+		if (!Authentication) {
+			Terminal({
+				MkAuth: [{
+					Authentication: "false",
+					Communication: "false"
+				}]
+			});
+			return res.json({
+				Status: "Fail",
+				Return: Debug('CONSOLE').mkfail
+			});
+		}
+
+		ConnAuth = true;
+
+		const syncResponse = await axios.get(`https://${iServer}/api/titulo/listar/limite=1&pagina=1`, {
+			headers: {
+				'Authorization': `Bearer ${Authentication}`
+			}
+		}).catch(() => null);
+
+		const MkSync = syncResponse?.data;
+
+		if (!MkSync || MkSync.error !== undefined) {
+			Terminal({
+				MkAuth: [{
+					Authentication: String(ConnAuth),
+					Communication: "false"
+				}]
+			});
+			return res.json({
+				Status: "Fail",
+				Return: Debug('CONSOLE').refused
+			});
+		}
+
+		ResAuth = true;
+
+		db.run(
+			"UPDATE mkauth SET client_id=?, client_secret=?, domain=?, tunel=?, mode=?, module=?, client_link=?",
+			[User, Pass, Domain, Tunel, Mode, Module, Server],
+			(err) => {
+				Terminal({
+					MkAuth: [{
+						Authentication: String(ConnAuth),
+						Communication: String(ResAuth)
+					}]
+				});
+
+				if (err) {
+					return res.json({
+						Status: "Fail",
+						Return: Debug('CONSOLE').failed
+					});
+				}
+				res.json({
+					Status: "Success",
+					Return: Debug('CONSOLE').mksuccess
+				});
+			}
+		);
+
+	} catch (err) {
+		Terminal({
+			MkAuth: [{
+				Authentication: String(ConnAuth),
+				Communication: String(ResAuth)
+			}]
+		});
+		return res.json({
+			Status: "Fail",
+			Return: Debug('CONSOLE').failed
+		});
+	}
+});
+
 
 // Send Image
 app.post('/send-image', [
@@ -3531,9 +4845,7 @@ app.post('/send-image', [
 ], async (req, res) => {
 	const errors = validationResult(req).formatWith(({
 		msg
-	}) => {
-		return msg;
-	});
+	}) => msg);
 
 	if (!errors.isEmpty()) {
 		return res.status(422).json({
@@ -3546,7 +4858,7 @@ app.post('/send-image', [
 	const hasMimetype = req.body.mimetype;
 	var isHid;
 
-	Json = {
+	let Json = {
 		"Mwsm": "/send-image",
 		"Main": "MkAuth",
 		"Start": DateTime()
@@ -3555,7 +4867,6 @@ app.post('/send-image', [
 		Json = JSON.stringify(Json);
 	}
 	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
-
 
 	if (!Boolean(Debug('MKAUTH').aimbot)) {
 
@@ -3574,42 +4885,49 @@ app.post('/send-image', [
 				isHid = (Debug('OPTIONS').token);
 			}
 		}
-		var Contact = req.body.to;
-		if (validPhone(Playground)) {
-			Contact = '55' + Playground;
-		}
-		const isWid = (Contact).replace(/[^0-9\\.]+/g, '');
-		const isDDI = isWid.substr(0, 2);
-		const isDDD = isWid.substr(2, 2);
-		const isCall = isWid.slice(-8);
-		var WhatsApp = isWid + '@c.us';
-		if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-			WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-		} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-			WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
-		}
-		const Mensagem = new MessageMedia(hasMimetype, (req.body.image), 'Media');
 
-		if ([Debug('OPTIONS').token, Password[1]].includes(isHid) && validPhone(isWid)) {
-			client.sendMessage(WhatsApp, Mensagem, {
+		var Contact = DDISet(req.body.to);
+		if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+			Contact = DDISet(Playground);
+		}
+
+		if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !validPhone(Contact)) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+			return res.status(401).json({
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+			});
+		}
+
+		try {
+			const numberDetails = await client.getNumberId(Contact);
+			if (!numberDetails) {
+				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail);
+				return res.status(400).json({
+					Status: "Fail",
+					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail
+				});
+			}
+
+			const WhatsApp = numberDetails._serialized;
+
+			const Mensagem = new MessageMedia(hasMimetype, req.body.image, 'Media');
+
+			await client.sendMessage(WhatsApp, Mensagem, {
 				caption: hasCaption,
 				linkPreview: false
-			}).then(response => {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
-				return res.status(200).json({
-					Status: "Success",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
-				});
-			}).catch(err => {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-				return res.status(500).json({
-					Status: "Fail",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-				});
-				WwjsVersion(false);
 			});
-		} else {
-			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
+			return res.json({
+				Status: "Success",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
+			});
+
+		} catch (err) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error, err);
+			if (typeof WwjsVersion === 'function') WwjsVersion(false);
+
 			return res.status(500).json({
 				Status: "Fail",
 				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
@@ -3617,7 +4935,9 @@ app.post('/send-image', [
 		}
 
 	} else {
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		if (global.io) {
+			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		}
 		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
 
 		return res.status(500).json({
@@ -3635,9 +4955,7 @@ app.post('/send-document', [
 ], async (req, res) => {
 	const errors = validationResult(req).formatWith(({
 		msg
-	}) => {
-		return msg;
-	});
+	}) => msg);
 
 	if (!errors.isEmpty()) {
 		return res.status(422).json({
@@ -3645,23 +4963,24 @@ app.post('/send-document', [
 			message: errors.mapped()
 		});
 	}
+
 	const hasCaption = req.body.caption;
 	const hasMimetype = req.body.mimetype;
 	const hasFileName = req.body.filename;
-
 	var isHid;
-	Json = {
+
+	let Json = {
 		"Mwsm": "/send-document",
 		"Main": "MkAuth",
 		"Start": DateTime()
 	};
-
 	if (typeof Json === 'object') {
 		Json = JSON.stringify(Json);
 	}
 	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
 
 	if (!Boolean(Debug('MKAUTH').aimbot)) {
+
 		if (Boolean(Debug('OPTIONS').protect)) {
 			if (req.body.pass != undefined) {
 				isHid = req.body.pass;
@@ -3677,42 +4996,49 @@ app.post('/send-document', [
 				isHid = (Debug('OPTIONS').token);
 			}
 		}
-		var Contact = req.body.to;
-		if (validPhone(Playground)) {
-			Contact = '55' + Playground;
-		}
-		const isWid = (Contact).replace(/[^0-9\\.]+/g, '');
-		const isDDI = isWid.substr(0, 2);
-		const isDDD = isWid.substr(2, 2);
-		const isCall = isWid.slice(-8);
-		var WhatsApp = isWid + '@c.us';
-		if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-			WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-		} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-			WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
-		}
-		const Mensagem = new MessageMedia(hasMimetype, (req.body.document), hasFileName);
 
-		if ([Debug('OPTIONS').token, Password[1]].includes(isHid) && validPhone(isWid)) {
-			client.sendMessage(WhatsApp, Mensagem, {
+		var Contact = DDISet(req.body.to);
+		if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+			Contact = DDISet(Playground);
+		}
+
+		if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !validPhone(Contact)) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+			return res.status(401).json({
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+			});
+		}
+
+		try {
+			const numberDetails = await client.getNumberId(Contact);
+			if (!numberDetails) {
+				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail);
+				return res.status(400).json({
+					Status: "Fail",
+					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail
+				});
+			}
+
+			const WhatsApp = numberDetails._serialized;
+
+			const Mensagem = new MessageMedia(hasMimetype, req.body.document, hasFileName);
+
+			await client.sendMessage(WhatsApp, Mensagem, {
 				caption: hasCaption,
 				linkPreview: false
-			}).then(response => {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
-				return res.status(200).json({
-					Status: "Success",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
-				});
-			}).catch(err => {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-				return res.status(500).json({
-					Status: "Fail",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-				});
-				WwjsVersion(false);
 			});
-		} else {
-			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
+			return res.json({
+				Status: "Success",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
+			});
+
+		} catch (err) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error, err);
+			if (typeof WwjsVersion === 'function') WwjsVersion(false);
+
 			return res.status(500).json({
 				Status: "Fail",
 				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
@@ -3720,955 +5046,696 @@ app.post('/send-document', [
 		}
 
 	} else {
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		if (global.io) {
+			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		}
 		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
 
 		return res.status(500).json({
 			Status: "Fail",
 			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger
 		});
-
 	}
 });
 
 
-// Send Message
-app.post('/send-message', [
-	body('to').notEmpty(),
-	body('msg').notEmpty(),
-], async (req, res) => {
-	const errors = validationResult(req).formatWith(({
-		msg
-	}) => {
-		return msg;
-	});
+// -------------------------------------------------------------
+// HELPER 
+// -------------------------------------------------------------
+function getNextValidShiftMs() {
+	const scheduler = Debug('SCHEDULER') || {};
 
-	if (!errors.isEmpty()) {
-		return res.status(422).json({
-			status: false,
-			message: errors.mapped()
-		});
+	const minHour = Number(scheduler.min) || 8;
+	const maxHour = Number(scheduler.max) || 22;
+
+	let candidate = new Date();
+	candidate.setMinutes(0, 0, 0);
+
+	const weekDays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+	for (let i = 0; i < 24 * 14; i++) {
+		const hour = candidate.getHours();
+
+		if (candidate.getTime() > Date.now()) {
+
+			const inRange = (hour >= minHour && hour < maxHour);
+
+			const currentDay = weekDays[candidate.getDay()];
+			const isDayAllowed = Boolean(scheduler[currentDay]);
+
+			const isTurnoAllowed = isShift(hour);
+
+			if (inRange && isDayAllowed && isTurnoAllowed) {
+				console.log(`> [SCHEDULER OTIMIZADO] Próxima janela válida encontrada: ${candidate.toLocaleString('pt-BR')} (${currentDay.toUpperCase()})`);
+				return candidate.getTime() - Date.now();
+			}
+		}
+
+		candidate.setHours(candidate.getHours() + 1);
 	}
-	var isHid;
-	if (Boolean(Debug('OPTIONS').protect)) {
-		if (req.body.pass != undefined) {
-			isHid = req.body.pass;
-		} else if (req.body.p != undefined) {
-			isHid = req.body.p;
+
+	const fallback = new Date();
+	fallback.setDate(fallback.getDate() + 1);
+	fallback.setHours(minHour, 0, 0, 0);
+	return fallback.getTime() - Date.now();
+}
+
+function getMsUntilMinShift() {
+	const minHour = Number(Debug('SCHEDULER')?.min) || 8;
+
+	const now = new Date();
+	const target = new Date(now);
+
+	target.setHours(minHour, 0, 0, 0);
+
+	if (now >= target) {
+		target.setDate(target.getDate() + 1);
+	}
+
+	return target.getTime() - now.getTime();
+}
+
+// -------------------------------------------------------------
+// WORKER 
+// -------------------------------------------------------------
+const REGEX_PIX_EMV = /^000201.*br\.gov\.bcb\.pix/i;
+
+function ensureMessageMedia(item) {
+	if (!item) return item;
+	if (typeof item === 'string') return item;
+
+	if (item instanceof MessageMedia && item.mimetype && item.data) {
+		item.isMedia = true;
+		return item;
+	}
+
+	if (typeof item === 'object' && item.mimetype && item.data) {
+		let cleanData = String(item.data);
+		if (cleanData.includes(';base64,')) {
+			cleanData = cleanData.split(';base64,')[1];
+		}
+
+		const filename = item.filename || 'Media';
+		const media = new MessageMedia(item.mimetype, cleanData, filename);
+
+		Object.setPrototypeOf(media, MessageMedia.prototype);
+		media.isMedia = true;
+		if (!media.filename) media.filename = filename;
+
+		return media;
+	}
+
+	return item;
+}
+
+const worker = new Worker('Row', async (job) => {
+	const jobData = job.data || {};
+	const {
+		to,
+		msg,
+		auth,
+		user,
+		send,
+		simulator,
+		pass,
+		p,
+		priority,
+		code
+	} = job.data;
+
+	const isAimbotEnabled = Boolean(Debug('MKAUTH').aimbot);
+
+	if (isAimbotEnabled) {
+		const msgPriority = Number(priority) || 4;
+		const dateTimeNow = DateTime(0);
+		const currentHour = Number((dateTimeNow.split(" ")[1]).split(":")[0]);
+
+		const minHour = Number(Debug('SCHEDULER')?.min) || 8;
+		const maxHour = Number(Debug('SCHEDULER')?.max) || 22;
+		const isShiftActive = Boolean(Debug('SCHEDULER')?.shift);
+
+		let shouldWait = false;
+		let waitReason = "";
+		let customDelayMs = null;
+
+		const isMadrugada = (currentHour >= 0 && currentHour < 3) && !(validPhone(Playground) && Initialize);
+
+		if (isMadrugada) {
+			shouldWait = true;
+			waitReason = `Sistema em atualização / Madrugada (00:00 - 02:59).`;
+
+			if (msgPriority < 4) {
+				const target3AM = new Date();
+				target3AM.setHours(3, 0, 5, 0);
+
+				if (Date.now() >= target3AM.getTime()) {
+					target3AM.setDate(target3AM.getDate() + 1);
+				}
+
+				customDelayMs = target3AM.getTime() - Date.now();
+			}
+		} else if (msgPriority === 4) {
+			const isBusinessHours = isShiftActive ?
+				(currentHour >= minHour && currentHour < maxHour) :
+				(((isWeek(dateTimeNow)) && (isShift(currentHour))) || (validPhone(Playground) && Initialize));
+
+			if (!isBusinessHours) {
+				shouldWait = true;
+				waitReason = `Cobrança (Prioridade ${msgPriority}) fora do horário permitido (${minHour}h às ${maxHour}h).`;
+			}
+		}
+
+		if (shouldWait) {
+			const delayMs = customDelayMs !== null ? customDelayMs : (
+				typeof getNextValidShiftMs === 'function' ? getNextValidShiftMs() : getMsUntilMinShift()
+			);
+
+			delete job.data.pass;
+			delete job.data.p;
+			delete job.data.simulator;
+			delete job.data.token;
+
+			await job.updateData(job.data);
+
+			const timestampAlvo = Date.now() + delayMs;
+			await job.moveToDelayed(timestampAlvo, job.token);
+			throw new DelayedError();
+		}
+	}
+
+	const isFromDelayed = job.attemptsMade > 0;
+
+	let isHid;
+	if (!isFromDelayed && Boolean(Debug('OPTIONS').protect)) {
+		if (pass !== undefined) {
+			isHid = pass;
+		} else if (p !== undefined) {
+			isHid = p;
 		} else {
 			isHid = '';
 		}
 	} else {
-		if ((Debug('OPTIONS').token == "" || Debug('OPTIONS').protect == undefined)) {
+		if (Debug('OPTIONS').token === "" || Debug('OPTIONS').protect === undefined) {
 			isHid = Password[1];
 		} else {
-			isHid = (Debug('OPTIONS').token);
+			isHid = Debug('OPTIONS').token;
 		}
 	}
 
-	var isAuth = req.body.auth,
-		Manager, inCall = req.body.to;
-	if (validPhone(Playground)) {
-		inCall = '55' + Playground;
+	let isAuth = isFromDelayed ? true : auth;
+	let inCall = to;
+	if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+		inCall = DDISet(Playground);
 	}
-	const isUser = req.body.user;
-	const isSend = req.body.send;
-	const Simulator = req.body.simulator;
-	const isWid = (inCall).replace(/[^0-9\\.]+/g, '');
-	const isDDI = isWid.substr(0, 2);
-	const isDDD = isWid.substr(2, 2);
-	const isCall = isWid.slice(-8);
-	var WhatsApp = isWid + '@c.us';
-	if ((isDDI == '55') && (parseInt(isDDD) <= 30)) {
-		WhatsApp = isWid.substr(0, 4) + '9' + isCall + '@c.us';
-	} else if ((isDDI == '55') && (parseInt(isDDD) > 30)) {
-		WhatsApp = isWid.substr(0, 4) + isCall + '@c.us';
-	}
-	switch ((Boolean(Debug('MKAUTH').aimbot) == Boolean(isAuth))) {
-		case true:
-			Manager = "Mwsm";
-			break;
-		case false:
-			Manager = "MkAuth";
-			break;
-	}
-	Json = {
-		"Mwsm": "/send-message",
-		"Main": Manager,
-		"Start": DateTime()
-	};
-	if (typeof Json === 'object') {
-		Json = JSON.stringify(Json);
-	}
-	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
 
+	const isUser = user;
+	const isSend = send;
+	const Simulator = simulator;
+
+	const Contact = DDISet(inCall);
+	const cleanTarget = Contact.replace(/\D/g, '').replace(/^55/, '');
+	const Manager = (Boolean(Debug('MKAUTH').aimbot) === Boolean(isAuth)) ? "Mwsm" : "MkAuth";
 
 	if (!Boolean(Debug('MKAUTH').aimbot)) {
 		isAuth = true;
 	}
 
-	if (Boolean(isAuth) && validPhone(isWid)) {
-		const Mensagem = (req.body.msg).replaceAll("\\n", "\r\n").split("##");
-		if (Debug('OPTIONS').schedule <= Debug('OPTIONS').limiter) {
-			var FUNCTION = [Debug('MKAUTH').bar, Debug('MKAUTH').pix, Debug('MKAUTH').qrpix, Debug('MKAUTH').qrlink, Debug('MKAUTH').pdf];
-			const uID = await Dataset('TARGET', 'START', DateTime(), 'INSERT');
-			if (uID == false) {
-				uID = Debug('TARGET').id;
-			}
-			const Constructor = new Promise((resolve, reject) => {
-				var Array = [];
-				var Radeon = {};
-				var Preview = false;
-				var Caption, Send, Register, Renner;
-				var RETURNS = [];
-				Radeon['Title'] = 'xxx';
-				Radeon['Name'] = 'Mwsm';
-				if (isUser != undefined) {
-					Radeon['Name'] = isUser;
-				}
-				if (isSend != undefined) {
-					Radeon['Title'] = isSend;
-				}
+	const cleanJobData = async () => {
+		try {
+			delete job.data.pass;
+			delete job.data.p;
+			delete job.data.auth;
+			delete job.data.simulator;
+			await job.updateData(job.data);
+		} catch (e) {}
+	};
 
-				if (Mensagem.some(Row => testJSON(Row)) && (FUNCTION.includes('true') || FUNCTION.includes('1')) && Boolean(Debug('MKAUTH').module)) {
-					Mensagem.some(function(Send, index) {
-						if (testJSON(Send) && (FUNCTION.includes('true') || FUNCTION.includes('1'))) {
-							var Json = Send.toString().replace('"', '').split(',');
-							isUid = Json[0].replace(/[{\}\\"]/g, '');
-							if (isUid.split(':').length == 2) {
-								isUid = isUid.split(':')[1];
-							} else {
-								isUid = (isUid).replace(isUid.split(':')[0], '');
-								isUid = isUid.replace(/^:+/, '');
-							}
-							isFind = Json[1].replace(/[^0-9]/g, '');
-							Json = {
-								uid: isUid,
-								find: isFind
-							};
-							Terminal(JSON.stringify(Json));
-							MkAuth(Json.uid, Json.find).then(Synchronization => {
-								if (Boolean(Debug('MKAUTH').bar)) {
-									RETURNS.push('Bar');
-								}
-								if (Boolean(Debug('MKAUTH').pix)) {
-									RETURNS.push('Pix');
-								}
+	if (Boolean(isAuth) && validPhone(Contact)) {
+		const Mensagem = msg.replaceAll("\\n", "\r\n").split("##");
+		const FUNCTION = [Debug('MKAUTH').bar, Debug('MKAUTH').pix, Debug('MKAUTH').qrpix, Debug('MKAUTH').qrlink, Debug('MKAUTH').pdf];
 
-								if (Boolean(Debug('MKAUTH').qrpix)) {
-									RETURNS.push('QRCode');
-								}
+		const startTime = DateTime();
+		let uID = await Dataset('TARGET', 'START', startTime, 'INSERT');
+		if (uID === false) {
+			uID = Debug('TARGET').id;
+		}
 
-								if (Boolean(Debug('MKAUTH').qrlink)) {
-									RETURNS.push('Link');
-								}
+		const Constructor = new Promise(async (resolve) => {
+			let ArrayData = [];
+			let Radeon = {
+				Title: 'xxx',
+				Name: 'Mwsm'
+			};
+			let RETURNS = [];
 
-								if (Boolean(Debug('MKAUTH').pdf)) {
-									RETURNS.push('Boleto');
-								}
-								if (Synchronization.ID != undefined) {
-									Radeon['Title'] = Synchronization.ID;
-									Radeon['Name'] = Synchronization.Name;
-									db.run("UPDATE target SET title=? WHERE id=?", [Synchronization.ID, uID], (err) => {
-										if (err) throw err;
-									});
-								}
-								if (Synchronization.Status != "pago" && Synchronization.Status != "paid" && Synchronization.Status != "Error" && Synchronization.Status != "Null") {
-									(Synchronization.Payments).forEach(function(GET, index) {
-										if (RETURNS.includes(GET.caption)) {
-											switch (GET.caption) {
-												case 'Bar':
-													Send = GET.value;
-													Caption = GET.caption;
-													break;
-												case 'Pix':
-													Send = GET.value;
-													Caption = GET.caption;
-													break;
-												case 'QRCode':
-													Send = new MessageMedia('image/png', GET.value, GET.caption);
-													Caption = GET.caption;
-													break;
-												case 'Link':
-													Send = GET.value;
-													Caption = GET.caption;
-													break;
-												case 'Boleto':
-													Send = GET.value;
-													Caption = GET.caption;
-													break;
-											}
-											if (Send != '') {
-												Array.push(Send);
-											}
-										}
-										if (((Synchronization.Payments).length == (index + 1))) {
-											Radeon['Message'] = Array;
-											resolve(Radeon);
-										}
-									});
-								} else {
-									if (Synchronization.Status == "Error") {
-										Radeon['Message'] = "Error";
-										resolve(Radeon);
+			if (isUser !== undefined) Radeon.Name = isUser;
+			if (isSend !== undefined) Radeon.Title = isSend;
 
-									} else {
-										if (Synchronization.Status == "Null") {
-											Radeon['Message'] = "Null";
-											resolve(Radeon);
+			const hasJson = Mensagem.some(Row => testJSON(Row));
+			const isFuncEnabled = FUNCTION.includes('true') || FUNCTION.includes('1');
 
-										} else {
-											Radeon['Message'] = "Fail";
-											resolve(Radeon);
-
-										}
-									}
-								}
-							}).catch(err => {
-								Radeon['Message'] = false;
-								resolve(Radeon);
-
-							});
-
-
+			if (hasJson && isFuncEnabled && Boolean(Debug('MKAUTH').module)) {
+				for (const Send of Mensagem) {
+					if (testJSON(Send)) {
+						let ParsedJson = Send.toString().replace('"', '').split(',');
+						let isUid = ParsedJson[0].replace(/[{\}\\"]/g, '');
+						if (isUid.split(':').length === 2) {
+							isUid = isUid.split(':')[1];
+						} else {
+							isUid = isUid.replace(isUid.split(':')[0], '').replace(/^:+/, '');
 						}
-					});
-				} else {
+						let isFind = ParsedJson[1].replace(/[^0-9]/g, '');
 
-					if (Mensagem.some(Row => testJSON(Row))) {
-						Mensagem.some(function(Send, index) {
-							if (testJSON(Send)) {
-								var Json = Send.toString().replace('"', '').split(',');
-								isUid = Json[0].replace(/[{\}\\"]/g, '');
-								if (isUid.split(':').length == 2) {
-									isUid = isUid.split(':')[1];
-								} else {
-									isUid = (isUid).replace(isUid.split(':')[0], '');
-									isUid = isUid.replace(/^:+/, '');
+						try {
+							const Synchronization = await MkAuth(isUid, isFind);
+
+							if (Boolean(Debug('MKAUTH').bar)) RETURNS.push('Bar');
+							if (Boolean(Debug('MKAUTH').pix)) RETURNS.push('Pix');
+							if (Boolean(Debug('MKAUTH').qrpix)) RETURNS.push('QRCode');
+							if (Boolean(Debug('MKAUTH').qrlink)) RETURNS.push('Link');
+							if (Boolean(Debug('MKAUTH').pdf)) RETURNS.push('Boleto');
+
+							if (Synchronization.ID !== undefined) {
+								Radeon.Title = Synchronization.ID;
+								Radeon.Name = Synchronization.Authority;
+								await link.prepare("UPDATE target SET title=? WHERE id=?").run(Synchronization.ID, uID);
+							}
+
+							if (!["pago", "paid", "Error", "Null"].includes(Synchronization.Status)) {
+								if (Array.isArray(Synchronization.Payments)) {
+									Synchronization.Payments.forEach((GET) => {
+										if (RETURNS.includes(GET.caption)) {
+											let SendData = GET.value;
+											if (GET.caption === 'QRCode') {
+												SendData = ensureMessageMedia(new MessageMedia('image/png', GET.value, GET.caption));
+											}
+											if (SendData !== '') ArrayData.push(SendData);
+										}
+									});
 								}
-								isFind = Json[1].replace(/[^0-9]/g, '');
-								Json = {
-									uid: isUid,
-									find: isFind
+								Radeon.Message = ArrayData;
+							} else {
+								Radeon.Message = Synchronization.Status === "Error" ? "Error" : (Synchronization.Status === "Null" ? "Null" : "Fail");
+							}
+						} catch (err) {
+							Radeon.Message = false;
+						}
+						break;
+					}
+				}
+				resolve(Radeon);
+			} else {
+				resolve(Radeon);
+			}
+		});
+
+		const Reconstructor = new Promise(async (resolve) => {
+			const mediaItems = Mensagem.filter(Send =>
+				Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))
+			);
+
+			if (mediaItems.length > 0) {
+				let isArray = {};
+				const Cloud = async (mediaUrl) => {
+					const response = await axios.get(mediaUrl, {
+						responseType: 'arraybuffer'
+					});
+					const mimetype = response.headers['content-type'];
+					const attachment = Buffer.from(response.data).toString('base64');
+					return ensureMessageMedia(new MessageMedia(mimetype, attachment, 'Media'));
+				};
+
+				await Promise.all(mediaItems.map(async (Send) => {
+					try {
+						isArray[Send] = await Cloud(Send);
+					} catch (err) {}
+				}));
+				resolve(isArray);
+			} else {
+				resolve(undefined);
+			}
+		});
+
+		let WhatsApp;
+		try {
+			const numberDetails = await client.getNumberId(Contact);
+			if (!numberDetails) {
+				await cleanJobData();
+				const failMsg = Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail;
+				throw new Error(failMsg);
+			}
+			WhatsApp = numberDetails._serialized || `${Contact.replace(/\D/g, '')}@c.us`;
+		} catch (err) {
+			await cleanJobData();
+			throw new Error(err.message || (Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error));
+		}
+
+		const Retorno = await Promise.all([Constructor, Reconstructor]);
+
+		const invalidMessages = ["Fail", "False", "Fatal", false, "Error", "Null"];
+		let Boleto, PDF2Base64;
+
+		if (Retorno[0].Message !== undefined && !invalidMessages.includes(Retorno[0].Message)) {
+			for (let i = 0; i < Retorno[0].Message.length; i++) {
+				if (typeof Retorno[0].Message[i] === 'string') {
+					if (Retorno[0].Message[i].indexOf("boleto.hhvm") > -1) {
+						const UID = Retorno[0].Message[i].split("=")[1];
+						Boleto = await Build(Retorno[0].Message[i]);
+
+						PDF2Base64 = await new Promise((resolve) => {
+							if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Boleto.includes(Row))) {
+								const Cloud = async (Url) => {
+									let mimetype;
+									const attachment = await axios.get(Url, {
+										responseType: 'arraybuffer'
+									}).then(response => {
+										mimetype = response.headers['content-type'];
+										return response.data.toString('base64');
+									});
+									return new MessageMedia(mimetype, attachment, 'Fatura');
 								};
-								Terminal(JSON.stringify(Json));
+
+								Cloud(Boleto).then(Return => {
+									resolve(Return);
+								}).catch(err => {
+									resolve(undefined);
+								});
+							} else {
+								resolve(undefined);
 							}
 						});
 
-						if (Boolean(Debug('MKAUTH').module)) {
-							if ((FUNCTION.includes('true') || FUNCTION.includes('1'))) {
-								Radeon['Message'] = undefined;
-							} else {
-								Radeon['Message'] = "False";
-							}
-						} else {
-							Radeon['Message'] = "Fatal";
-							JDebug = {
-								"MkAuth": "Connect was Failed",
-							};
-							Terminal(JDebug);
+						if (await PDF2Base64) {
+							Retorno[0].Message[i] = await PDF2Base64;
 						}
-						resolve(Radeon);
-					} else {
-						Radeon['Message'] = undefined;
-						resolve(Radeon);
-					}
-				}
-			});
 
-			const Reconstructor = new Promise((resolve, reject) => {
-				if (Mensagem.some(Row => Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Rows => Row.includes(Rows)))) {
-					var isArray = {};
-					(Mensagem).someAsync(async (Send) => {
-						if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))) {
-							const isCloud = async (Url) => {
-								let isMimetype;
-								const isAttachment = await axios.get(Url, {
-									responseType: 'arraybuffer'
-								}).then(response => {
-									isMimetype = response.headers['content-type'];
-									return response.data.toString('base64');
-								});
-								return await new MessageMedia(isMimetype, isAttachment, 'Media');
-							};
-
-							await isCloud(Send).then(Return => {
-								isArray[Send] = Return;
-								resolve(isArray);
-							}).catch(err => {
-								resolve(undefined);
-							});
-
-						}
-					});
-				} else {
-					resolve(undefined);
-				}
-			});
-
-			delay(0).then(async function() {
-				const Retorno = await Promise.all([Constructor, Reconstructor]);
-				var Boleto, PDF2Base64, Sleep = 0;
-				if (Debug('MKAUTH').delay >= 3) {
-					Sleep = (Sleep + (Debug('MKAUTH').delay * 1000));
-				}
-				if ((Retorno[0].Message != undefined) && (Retorno[0].Message != "Fail") && (Retorno[0].Message != "False") && (Retorno[0].Message != "Fatal") && (Retorno[0].Message != false) && (Retorno[0].Message != "Error") && (Retorno[0].Message != "Null")) {
-
-					for (let i = 0; i < Retorno[0].Message.length; i++) {
-						if (typeof Retorno[0].Message[i] === 'string') {
-							if ((Retorno[0].Message[i].indexOf("boleto.hhvm") > -1)) {
-								const UID = Retorno[0].Message[i].split("=")[1];
-								Boleto = await Build(Retorno[0].Message[i]);
-								PDF2Base64 = await new Promise((resolve, reject) => {
-									if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Boleto.includes(Row))) {
-										const Cloud = async (Url) => {
-											let mimetype;
-											const attachment = await axios.get(Url, {
-												responseType: 'arraybuffer'
-											}).then(response => {
-												mimetype = response.headers['content-type'];
-												return response.data.toString('base64');
-											});
-											return new MessageMedia(mimetype, attachment, 'Fatura');
-										};
-										Cloud(Boleto).then(Return => {
-											resolve(Return);
-										}).catch(err => {
-											resolve(undefined);
-										});
-									}
-								});
-								Boleto = await PDF2Base64;
-								if (fs.existsSync(__dirname + "/" + UID + ".pdf")) {
-									fs.unlinkSync(__dirname + "/" + UID + ".pdf");
-								}
-							}
+						if (fs.existsSync(__dirname + "/" + UID + ".pdf")) {
+							try {
+								fs.unlinkSync(__dirname + "/" + UID + ".pdf");
+							} catch (e) {}
 						}
 					}
 				}
-				delay(Sleep).then(async function() {
-					var Assembly = [];
-					var Sending = 1;
-					var Ryzen = 0;
-					var PrevERROR = false;
-					Mensagem.someAsync(async (Send) => {
-						if (testJSON(Send)) {
-							if ((Retorno[0].Message != undefined) && (Retorno[0].Message != "Fail") && (Retorno[0].Message != false) && (Retorno[0].Message != "Error") && (Retorno[0].Message != "Null") && (Retorno[0].Message != "Fatal") && (Retorno[0].Message != "False")) {
-								for (let i = 0; i < Retorno[0].Message.length; i++) {
-									Assembly.push(Retorno[0].Message[i]);
-								}
-							}
-						} else {
-							if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))) {
-								if (typeof Send === 'string') {
-									if ((Send.indexOf("http") > -1)) {
-										if (Retorno[1][Send] != undefined) {
-											if (Retorno[1].hasOwnProperty(Send)) {
-												Assembly.push(Retorno[1][Send]);
-											}
-
-										}
-									} else {
-										Assembly.push(Send);
-									}
-								} else {
-									if (Retorno[1][Send] != undefined) {
-										if (Retorno[1].hasOwnProperty(Send)) {
-											Assembly.push(Retorno[1][Send]);
-										}
-									}
-								}
-							} else {
-								Assembly.push(Send);
-							}
-						}
-					});
-
-					if (WhatsApp == Wait || Wait == undefined) {
-						Delay = 300;
-					} else {
-						Delay = Debug('OPTIONS').sendwait;
-					}
-					if (Assembly.length >= 1) {
-						if ((Retorno[0].Message == "Fail") || (Retorno[0].Message == false) || (Retorno[0].Message == "Error") || (Retorno[0].Message == "Null") || (Retorno[0].Message == "Fatal") || (Retorno[0].Message == "False")) {
-							global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-							console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-							if (Retorno[0].Message == "Fail") {
-								res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').unavailable
-								});
-							}
-							if (Retorno[0].Message == "Error") {
-								res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').request
-								});
-							}
-							if (Retorno[0].Message == "Null") {
-								res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').missing
-								});
-							}
-
-							if (Retorno[0].Message == "Fatal") {
-								res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').mkfail
-								});
-							}
-
-							if (Retorno[0].Message == "False") {
-								res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').mkunselect
-								});
-							}
-
-							if (Retorno[0].Message == false) {
-								var SELECTOR = false;
-								if (Boolean(Debug('MKAUTH').bar)) {
-									SELECTOR = true;
-								}
-
-								if (Boolean(Debug('MKAUTH').pix)) {
-									SELECTOR = true;
-								}
-
-								if (Boolean(Debug('MKAUTH').qrpix)) {
-									SELECTOR = true;
-								}
-
-								if (Boolean(Debug('MKAUTH').qrlink)) {
-									SELECTOR = true;
-								}
-
-								if (Boolean(Debug('MKAUTH').pdf)) {
-									SELECTOR = true;
-								}
-								Retorno[0].Message = "Fail";
-								if (SELECTOR) {
-									return res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').refused
-									});
-								} else {
-									return res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').mkunselect
-									});
-								}
-							}
-							db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-								if (TARGET != undefined) {
-									if (Retorno[0].Title == "xxx") {
-										Retorno[0].Title = uID;
-									}
-									if (Retorno[0].Message == undefined) {
-										Retorno[0].Message = "Null";
-									}
-									if (Retorno[0].Message == "False") {
-										Retorno[0].Message = "Fail";
-									}
-
-									db.serialize(() => {
-										db.run("UPDATE target SET end=?, status=?, target=?, title=?, client=? WHERE id=?", [DateTime(), Retorno[0].Message, WhatsApp.replace(/^55+/, '').replace(/\D/g, ''), Retorno[0].Title, Retorno[0].Name, uID], (err) => {
-											if (err) throw err;
-										});
-										db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-											isTARGET = [];
-											if (TARGET != undefined) {
-												Debug('TARGET', '*', 'ALL').some(function(TARGET, index) {
-													if (TARGET.status == 'pending') {
-														Dataset('TARGET', '*', TARGET.id, 'DELETE');
-														Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
-													} else {
-														if (TARGET.target == "900000000") {
-															TARGET.target = "(00) 0 0000-0000";
-														}
-														GetLog = {
-															"ID": TARGET.id,
-															"TITLE": TARGET.title,
-															"NAME": TARGET.client,
-															"START": TARGET.start,
-															"END": TARGET.end,
-															"TARGET": TARGET.target,
-															"STATUS": TARGET.status,
-														};
-														isTARGET.push(GetLog);
-														if (Debug('TARGET', '*', 'ALL').length <= (index + 1)) {
-															if (Boolean(Debug('OPTIONS').auth)) {
-																global.io.emit('setlog', isTARGET);
-															}
-														}
-													}
-
-												});
-											}
-										});
-									});
-								}
-							});
-						} else {
-							Terminal(Assembly);
-							setTimeout(function() {
-								var DoubleKill;
-								Assembly.some(function(Send, index) {
-									const PIXFAIL = [undefined, "XXX", null, ""];
-									if (!PIXFAIL.includes(Debug('OPTIONS').pixfail) && Send == "CodigoIndisponivel") {
-										Send = Send.replace("CodigoIndisponivel", Debug('OPTIONS').pixfail);
-									}
-									setTimeout(function() {
-										setTimeout(function() {
-											if (typeof Send === 'string') {
-												if ((Send.indexOf("boleto.hhvm") > -1)) {
-													if (Boleto != undefined) {
-														if (typeof Boleto !== 'string') {
-															Send = Boleto;
-														}
-													}
-													Caption = "Boleto";
-													Preview = true;
-													Ryzen = 1000;
-												} else {
-													if ((Send.indexOf("http") > -1)) {
-														Caption = undefined;
-														Preview = true;
-													} else {
-														Caption = undefined;
-														Preview = false;
-													}
-												}
-											} else {
-												if (JSON.parse(JSON.stringify(Send)).filename != "Media") {
-													Caption = JSON.parse(JSON.stringify(Send)).filename;
-													Preview = false;
-												} else {
-													Caption = undefined;
-													Preview = false;
-												}
-												Ryzen = 1000;
-											}
-
-
-											if ([Debug('OPTIONS').token, Password[1]].includes(isHid)) {
-												(async () => {
-													if (Boolean(Debug('MKAUTH').prevent)) {
-														if (DoubleKill != Send) {
-															try {
-																await client.sendMessage(WhatsApp, isEmoji(Send), {
-																	caption: Caption,
-																	linkPreview: Preview
-																});
-															} catch (err) {
-																return res.status(500).json({
-																	Status: "Fail",
-																	message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-																});
-																await WwjsVersion(false);
-															} finally {
-																DoubleKill = Send;
-																Wait = WhatsApp;
-																Sending = (Sending + 1);
-															}
-														}
-													} else {
-														try {
-															await client.sendMessage(WhatsApp, isEmoji(Send), {
-																caption: Caption,
-																linkPreview: Preview
-															});
-														} catch (err) {
-															return res.status(500).json({
-																Status: "Fail",
-																message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-															});
-															await WwjsVersion(false);
-														} finally {
-															Wait = WhatsApp;
-															Sending = (Sending + 1);
-														}
-													}
-												})();
-											} else {
-
-												return res.status(500).json({
-													Status: "Fail",
-													message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-												});
-
-											}
-
-											if ((Sending == Assembly.length) || (Assembly.length == (index + 1))) {
-
-												db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-													if (TARGET != undefined) {
-
-														if (Retorno[0].Title == "xxx") {
-															Retorno[0].Title = Debug('TARGET').id;
-														}
-														if (Retorno[0].Message == undefined) {
-															Retorno[0].Message = "Null";
-														}
-														if (Retorno[0].Message == "False") {
-															Retorno[0].Message = "Fail";
-														}
-
-
-														db.serialize(() => {
-															db.run("UPDATE target SET end=?, status=?, target=?, title=?, client=? WHERE id=?", [DateTime(), 'Sent', WhatsApp.replace(/^55+/, '').replace(/\D/g, ''), Retorno[0].Title, Retorno[0].Name, uID], (err) => {
-
-																if (err) throw err;
-															});
-															db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-																isTARGET = [];
-																if (TARGET != undefined) {
-																	Debug('TARGET', '*', 'ALL').some(function(TARGET, index) {
-																		if (TARGET.status == 'pending') {
-																			Dataset('TARGET', '*', TARGET.id, 'DELETE');
-																			Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
-																		} else {
-																			if (TARGET.target == "900000000") {
-																				TARGET.target = "(00) 0 0000-0000";
-																			}
-																			GetLog = {
-																				"ID": TARGET.id,
-																				"TITLE": TARGET.title,
-																				"NAME": TARGET.client,
-																				"START": TARGET.start,
-																				"END": TARGET.end,
-																				"TARGET": TARGET.target,
-																				"STATUS": TARGET.status,
-																			};
-																			isTARGET.push(GetLog);
-																			if (Debug('TARGET', '*', 'ALL').length <= (index + 1)) {
-																				if (Boolean(Debug('OPTIONS').auth)) {
-																					global.io.emit('setlog', isTARGET);
-																				}
-																			}
-																		}
-
-																	});
-																}
-															});
-														});
-													}
-												});
-
-												console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
-												return res.json({
-													Status: "Success",
-													message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
-												});
-
-											}
-										}, ((Debug('MKAUTH').delay + index) * Ryzen));
-									}, (index) * Debug('OPTIONS').interval);
-								});
-							}, Math.floor(Delay + Math.random() * 1000));
-						}
-					} else {
-						if (Boolean(Debug('MKAUTH').module)) {
-							if (Retorno[0].Message == "Fail" || Retorno[0].Message == false || (Retorno[0].Message == "Error") || (Retorno[0].Message == "Null") || (Retorno[0].Message == "Fatal") || (Retorno[0].Message == "False")) {
-								global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-								console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-
-								if (Retorno[0].Message == "Fail") {
-									res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').unavailable
-									});
-								}
-								if (Retorno[0].Message == "Error") {
-									res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').request
-									});
-								}
-								if (Retorno[0].Message == "Null") {
-									res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').missing
-									});
-								}
-
-								if (Retorno[0].Message == "Fatal") {
-									res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').mkfail
-									});
-								}
-
-								if (Retorno[0].Message == "False") {
-									res.json({
-										Status: "Fail",
-										message: Debug('CONSOLE').mkunselect
-									});
-								}
-								if (Retorno[0].Message == false) {
-									var SELECTOR = false;
-									if (Boolean(Debug('MKAUTH').bar)) {
-										SELECTOR = true;
-									}
-
-									if (Boolean(Debug('MKAUTH').pix)) {
-										SELECTOR = true;
-									}
-
-									if (Boolean(Debug('MKAUTH').qrpix)) {
-										SELECTOR = true;
-									}
-
-									if (Boolean(Debug('MKAUTH').qrlink)) {
-										SELECTOR = true;
-									}
-
-									if (Boolean(Debug('MKAUTH').pdf)) {
-										SELECTOR = true;
-									}
-									Retorno[0].Message = "Fail";
-									if (SELECTOR) {
-
-										return res.json({
-											Status: "Fail",
-											message: Debug('CONSOLE').refused
-										});
-									} else {
-										return res.json({
-											Status: "Fail",
-											message: Debug('CONSOLE').mkunselect
-										});
-									}
-								}
-
-								db.get("SELECT * FROM target WHERE id='" + Debug('TARGET').id + "'", (err, TARGET) => {
-									if (TARGET != undefined) {
-
-										if (Retorno[0].Title == "xxx") {
-											Retorno[0].Title = Debug('TARGET').id;
-										}
-										if (Retorno[0].Message == undefined) {
-											Retorno[0].Message = "Null";
-										}
-										if (Retorno[0].Message == "False") {
-											Retorno[0].Message = "Fail";
-										}
-
-
-										db.serialize(() => {
-											db.run("UPDATE target SET end=?, status=?, target=?, title=? WHERE id=?", [DateTime(), Retorno[0].Message, WhatsApp.replace(/^55+/, '').replace(/\D/g, ''), Retorno[0].Title, uID], (err) => {
-
-												if (err) throw err;
-											});
-											db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-												isTARGET = [];
-												if (TARGET != undefined) {
-													Debug('TARGET', '*', 'ALL').some(function(TARGET, index) {
-														if (TARGET.status == 'pending') {
-															Dataset('TARGET', '*', TARGET.id, 'DELETE');
-															Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
-														} else {
-															if (TARGET.target == "900000000") {
-																TARGET.target = "(00) 0 0000-0000";
-															}
-															GetLog = {
-																"ID": TARGET.id,
-																"TITLE": TARGET.title,
-																"NAME": TARGET.client,
-																"START": TARGET.start,
-																"END": TARGET.end,
-																"TARGET": TARGET.target,
-																"STATUS": TARGET.status,
-															};
-															isTARGET.push(GetLog);
-															if (Debug('TARGET', '*', 'ALL').length <= (index + 1)) {
-																if (Boolean(Debug('OPTIONS').auth)) {
-																	global.io.emit('setlog', isTARGET);
-																}
-															}
-														}
-
-													});
-												}
-											});
-										});
-									}
-								});
-							} else {
-								if ((Debug('TARGET', '*', 'ALL')).length >= 1) {
-
-									db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-										if (TARGET != undefined) {
-
-											if (Retorno[0].Title == "xxx") {
-												Retorno[0].Title = uID;
-											}
-											if (Retorno[0].Message == undefined) {
-												Retorno[0].Message = "Null";
-											}
-											if (Retorno[0].Message == "False") {
-												Retorno[0].Message = "Fail";
-											}
-
-											db.serialize(() => {
-												db.run("UPDATE target SET end=?, status=?, target=?, title=? WHERE id=?", [DateTime(), Retorno[0].Message, WhatsApp.replace(/^55+/, '').replace(/\D/g, ''), Retorno[0].Title, uID], (err) => {
-
-													if (err) throw err;
-												});
-												db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-													isTARGET = [];
-													if (TARGET != undefined) {
-														Debug('TARGET', '*', 'ALL').some(function(TARGET, index) {
-															if (TARGET.status == 'pending') {
-																Dataset('TARGET', '*', TARGET.id, 'DELETE');
-																Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
-															} else {
-																if (TARGET.target == "900000000") {
-																	TARGET.target = "(00) 0 0000-0000";
-																}
-																GetLog = {
-																	"ID": TARGET.id,
-																	"TITLE": TARGET.title,
-																	"NAME": TARGET.client,
-																	"START": TARGET.start,
-																	"END": TARGET.end,
-																	"TARGET": TARGET.target,
-																	"STATUS": TARGET.status,
-																};
-																isTARGET.push(GetLog);
-																if (Debug('TARGET', '*', 'ALL').length <= (index + 1)) {
-																	if (Boolean(Debug('OPTIONS').auth)) {
-																		global.io.emit('setlog', isTARGET);
-																	}
-																}
-															}
-
-														});
-													}
-												});
-											});
-										}
-									});
-
-								} else {
-									global.io.emit('getlog', true);
-
-								}
-
-								return res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').mkunselect
-								});
-							}
-						} else {
-
-							if (!Boolean(Debug('MKAUTH').module)) {
-								Retorno[0].Message = "Fail";
-								return res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').mkfail
-								});
-
-							} else {
-								return res.json({
-									Status: "Fail",
-									message: Debug('CONSOLE').unnamed
-								});
-							}
-
-							if ((Debug('TARGET', '*', 'ALL')).length >= 1) {
-								db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-									if (TARGET != undefined) {
-
-										if (Retorno[0].Title == "xxx") {
-											Retorno[0].Title = Debug('TARGET').id;
-										}
-
-										if (Retorno[0].Message == undefined) {
-											Retorno[0].Message = "Null";
-										}
-
-										if (Retorno[0].Message == "False") {
-											Retorno[0].Message = "Fail";
-										}
-
-										db.serialize(() => {
-											db.run("UPDATE target SET end=?, status=?, target=?, title=? WHERE id=?", [DateTime(), Retorno[0].Message, WhatsApp.replace(/^55+/, '').replace(/\D/g, ''), Retorno[0].Title, uID], (err) => {
-
-												if (err) throw err;
-											});
-											db.get("SELECT * FROM target WHERE id='" + uID + "'", (err, TARGET) => {
-												isTARGET = [];
-												if (TARGET != undefined) {
-													Debug('TARGET', '*', 'ALL').some(function(TARGET, index) {
-														if (TARGET.status == 'pending') {
-															Dataset('TARGET', '*', TARGET.id, 'DELETE');
-															Dataset('SQLITE_SEQUENCE', 'SEQ', 'TARGET', 'FLUSH');
-														} else {
-															if (TARGET.target == "900000000") {
-																TARGET.target = "(00) 0 0000-0000";
-															}
-															GetLog = {
-																"ID": TARGET.id,
-																"TITLE": TARGET.title,
-																"NAME": TARGET.client,
-																"START": TARGET.start,
-																"END": TARGET.end,
-																"TARGET": TARGET.target,
-																"STATUS": TARGET.status,
-															};
-															isTARGET.push(GetLog);
-															if (Debug('TARGET', '*', 'ALL').length <= (index + 1)) {
-																if (Boolean(Debug('OPTIONS').auth)) {
-																	global.io.emit('setlog', isTARGET);
-																}
-															}
-														}
-
-													});
-												}
-											});
-										});
-									}
-								});
-
-							} else {
-								global.io.emit('getlog', true);
-
-							}
-
-						}
-					}
-				});
-			});
-		} else {
-			console.log("Mensagem Agendada");
+			}
 		}
-	} else if (Boolean(Simulator)) {
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
 
-		return res.json({
-			Status: "Fail",
-			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+		let Assembly = [];
+		Mensagem.forEach((Send) => {
+			if (testJSON(Send)) {
+				if (Retorno[0].Message !== undefined && !invalidMessages.includes(Retorno[0].Message)) {
+					Retorno[0].Message.forEach(m => Assembly.push(m));
+				}
+			} else if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))) {
+				if (Retorno[1] && Retorno[1][Send]) {
+					Assembly.push(Retorno[1][Send]);
+				} else if (typeof Send !== 'string') {
+					Assembly.push(Send);
+				}
+			} else {
+				Assembly.push(Send);
+			}
 		});
 
-	} else if (Boolean(Debug('MKAUTH').aimbot)) {
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
-		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		let targetFormatted = cleanTarget;
+		let tClean = String(targetFormatted || '').replace(/\D/g, '');
+		if (tClean.length === 11) {
+			targetFormatted = `(${tClean.slice(0, 2)}) ${tClean.slice(2, 3)} ${tClean.slice(3, 7)}-${tClean.slice(7)}`;
+		} else if (tClean.length === 10) {
+			targetFormatted = `(${tClean.slice(0, 2)}) ${tClean.slice(2, 6)}-${tClean.slice(6)}`;
+		}
 
-		return res.status(500).json({
-			Status: "Fail",
-			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger
-		});
+		if (Assembly.length >= 1 && !invalidMessages.includes(Retorno[0].Message)) {
+			let SendWaitDelay = 300;
+			if (typeof global.Wait !== 'undefined' && cleanTarget !== global.Wait) {
+				SendWaitDelay = Debug('OPTIONS').sendwait !== undefined ? Number(Debug('OPTIONS').sendwait) : 30000;
+			}
+
+			const TotalSendWait = Math.floor(SendWaitDelay + Math.random() * 1000);
+			await new Promise(r => setTimeout(r, TotalSendWait));
+
+			const itemInterval = Debug('OPTIONS').interval !== undefined ? Number(Debug('OPTIONS').interval) : 1000;
+			let DoubleKill;
+			let sendFailed = false;
+			let sendErrorMessage = "";
+
+			const isTokenAuthorized = isFromDelayed || [Debug('OPTIONS').token, Password[1]].includes(isHid);
+
+			if (!isTokenAuthorized) {
+				await cleanJobData();
+				throw new Error("Token de autenticação/segurança inválido ou não autorizado.");
+			}
+
+			for (let index = 0; index < Assembly.length; index++) {
+				let Send = Assembly[index];
+				let Caption = undefined;
+				let Preview = false;
+
+				Send = ensureMessageMedia(Send);
+
+				if (typeof Send === 'string' && Send.includes("http")) {
+					Preview = true;
+				}
+
+				let payloadToSend = (typeof Send === 'string') ? isEmoji(Send) : Send;
+				const isPixCode = typeof payloadToSend === 'string' && REGEX_PIX_EMV.test(payloadToSend);
+
+				if (isPixCode) {
+					payloadToSend = payloadToSend.replace(/\./g, '.\u200B');
+					Preview = false;
+				}
+
+				try {
+					const sendOptions = {
+						linkPreview: Preview
+					};
+					if (Caption) sendOptions.caption = Caption;
+
+					if (Boolean(Debug('MKAUTH').prevent)) {
+						if (DoubleKill !== Send) {
+							await client.sendMessage(WhatsApp, payloadToSend, sendOptions);
+							DoubleKill = Send;
+						}
+					} else {
+						await client.sendMessage(WhatsApp, payloadToSend, sendOptions);
+					}
+				} catch (err) {
+					sendFailed = true;
+					sendErrorMessage = err.message || "Erro desconhecido na biblioteca do WhatsApp";
+				}
+
+				if (index < Assembly.length - 1) {
+					await new Promise(r => setTimeout(r, itemInterval));
+				}
+			}
+
+			global.Wait = cleanTarget;
+			const finalTitle = Retorno[0].Title === "xxx" ? uID : Retorno[0].Title;
+			const finalName = Retorno[0].Name;
+			const endTime = DateTime();
+
+			const finalStatus = sendFailed ? "Error" : "Sent";
+
+			await link.prepare("UPDATE target SET end=?, status=?, target=?, title=?, client=? WHERE id=?")
+				.run(endTime, finalStatus, cleanTarget, finalTitle, finalName, uID);
+
+			if (global.io) {
+				global.io.emit('setlog', [{
+					"ID": uID,
+					"TITLE": finalTitle,
+					"NAME": finalName,
+					"START": startTime,
+					"END": endTime,
+					"TARGET": targetFormatted,
+					"STATUS": finalStatus
+				}]);
+				if (sendFailed) {
+					global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+				}
+			}
+
+			await cleanJobData();
+
+			if (sendFailed) {
+				const errorReason = Debug('CONSOLE').error || sendErrorMessage || "Falha na entrega da mensagem pelo WhatsApp";
+				throw new Error(errorReason);
+			}
+
+			return {
+				Status: "Success",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
+			};
+
+		} else {
+			let errorMessage = Debug('CONSOLE').refused;
+			if (Retorno[0].Message === "Fail") errorMessage = Debug('CONSOLE').unavailable;
+			if (Retorno[0].Message === "Error") errorMessage = Debug('CONSOLE').request;
+			if (Retorno[0].Message === "Null") errorMessage = Debug('CONSOLE').missing;
+			if (Retorno[0].Message === "Fatal") errorMessage = Debug('CONSOLE').mkfail;
+			if (Retorno[0].Message === "False") errorMessage = Debug('CONSOLE').mkunselect;
+
+			const failStatus = Retorno[0].Message || "Fail";
+			const finalTitle = Retorno[0].Title === "xxx" ? uID : Retorno[0].Title;
+			const finalName = Retorno[0].Name;
+			const endTime = DateTime();
+
+			await link.prepare("UPDATE target SET end=?, status=?, target=?, title=?, client=? WHERE id=?")
+				.run(endTime, failStatus, cleanTarget, finalTitle, finalName, uID);
+
+			if (global.io) {
+				global.io.emit('setlog', [{
+					"ID": uID,
+					"TITLE": finalTitle,
+					"NAME": finalName,
+					"START": startTime,
+					"END": endTime,
+					"TARGET": targetFormatted,
+					"STATUS": failStatus
+				}]);
+				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+			}
+
+			await cleanJobData();
+
+			throw new Error(errorMessage || "Mensagem recusada ou dados indisponíveis.");
+		}
+
 	} else {
-		global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+		if (global.io) {
+			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+		}
 
-		return res.status(500).json({
+		await cleanJobData();
+
+		const validationError = Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error;
+		throw new Error(validationError);
+	}
+}, {
+	connection,
+	concurrency: 1,
+	lockDuration: 120000,
+	lockRenewTime: 30000,
+	maxStalledCount: 2,
+	skipVersionCheck: true
+});
+
+export {
+	worker,
+	messageQueue
+};
+
+const {
+	createBullBoard
+} = require('@bull-board/api');
+const {
+	BullMQAdapter
+} = require('@bull-board/api/bullMQAdapter');
+const {
+	ExpressAdapter
+} = require('@bull-board/express');
+
+const serverAdapter = new ExpressAdapter();
+serverAdapter.setBasePath('/panel');
+
+// Send Message
+app.post('/send-message', [
+	body('to').notEmpty(),
+	body('msg').notEmpty(),
+	body().custom((value, {
+		req
+	}) => {
+		const isProtectActive = Boolean(Debug('OPTIONS').protect);
+		if (isProtectActive && !req.body.pass && !req.body.p) {
+			throw new Error();
+		}
+		return true;
+	})
+], async (req, res) => {
+	const startTime = Date.now();
+	const clientIp = req.ip || req.connection?.remoteAddress;
+
+	const sendLoggedResponse = (statusCode, responseData) => {
+		const durationMs = Date.now() - startTime;
+		return res.status(statusCode).json(responseData);
+	};
+
+	const errors = validationResult(req).formatWith(({
+		msg
+	}) => msg);
+
+	if (!errors.isEmpty()) {
+		return sendLoggedResponse(422, {
+			Status: "Fail",
+			message: errors.mapped()
+		});
+	}
+
+	var isHid;
+	if (Boolean(Debug('OPTIONS').protect)) {
+		if (req.body.pass !== undefined) {
+			isHid = req.body.pass;
+		} else if (req.body.p !== undefined) {
+			isHid = req.body.p;
+		} else {
+			isHid = '';
+		}
+	} else {
+		if (Debug('OPTIONS').token === "" || Debug('OPTIONS').protect === undefined) {
+			isHid = Password[1];
+		} else {
+			isHid = Debug('OPTIONS').token;
+		}
+	}
+
+	var Contact = typeof DDISet === 'function' ? DDISet(req.body.to) : req.body.to;
+	if (typeof Playground !== 'undefined' && typeof validPhone === 'function' && validPhone(Playground)) {
+		Contact = typeof DDISet === 'function' ? DDISet(Playground) : Playground;
+	}
+
+	const isWid = String(Contact).replace(/[^0-9.]+/g, '');
+	const isValidPhone = typeof validPhone === 'function' ? validPhone(isWid) : isWid.length >= 10;
+
+	if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !isValidPhone) {
+		return sendLoggedResponse(401, {
 			Status: "Fail",
 			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+		});
+	}
+
+	let Json = {
+		"Mwsm": "/send-message",
+		"Main": "MkAuth",
+		"Start": DateTime()
+	};
+	if (typeof Json === 'object') {
+		Json = JSON.stringify(Json);
+	}
+
+	req.body.toFormatted = Contact;
+
+	try {
+		const job = await EnqueueWithPriority(req.body, 0, true);
+
+		if (!job) {
+			return sendLoggedResponse(200, {
+				Status: "Success",
+				message: `${Debug('OPTIONS').appname} : Mensagem/Cobrança para este título já enviada ou agendada hoje.`,
+				duplicated: true
+			});
+		}
+
+		return sendLoggedResponse(200, {
+			Status: "Success",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queue,
+			jobId: job.id
+		});
+
+	} catch (err) {
+		if (typeof WwjsVersion === 'function') WwjsVersion(false);
+
+		return sendLoggedResponse(500, {
+			Status: "Fail",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queuefail,
+			error: err.message
 		});
 	}
 });
@@ -4679,168 +5746,334 @@ app.get('/build', [
 ], async (req, res) => {
 	const errors = validationResult(req).formatWith(({
 		uid
-	}) => {
-		return uid;
-	});
+	}) => uid);
+
 	if (!errors.isEmpty()) {
 		return res.status(422).json({
 			status: false,
 			message: errors.mapped()
 		});
 	}
+
 	const GET = req.body.uid;
-	const UID = GET.split('=')[1];
-	const URL = ([GET]);
-	URL.someAsync(async (Send) => {
+	const parts = GET.split('=');
+	const UID = parts[parts.length - 1];
+
+	try {
 		htmlPDF.setOptions({
 			format: "A4",
 			timeout: 5000
 		});
 		htmlPDF.setAutoCloseBrowser(false);
-		const Buffer = await htmlPDF.create(Send);
+
+		const Buffer = await htmlPDF.create(GET);
 		const Patch = `${__dirname}/${UID}.pdf`;
 		await htmlPDF.writeFile(Buffer, Patch);
-		return res.json({
-			Return: "http://" + ip.address() + ":" + Debug('OPTIONS').access + "/" + UID + ".pdf"
+
+		res.json({
+			Return: `http://${ip.address()}:${Debug('OPTIONS').access}/${UID}.pdf`
 		});
+	} catch (err) {
+		res.status(500).json({
+			status: false,
+			message: Debug('CONSOLE').error || err.message
+		});
+	} finally {
 		await htmlPDF.closeBrowser();
-	});
+	}
 });
 
 const Build = async (SET) => {
-	const PDFGet = await axios.get("http://" + ip.address() + ":" + Debug('OPTIONS').access + "/build", {
-		data: {
-			uid: SET,
-		}
-	}).then(response => {
-		return response.data;
-	}).catch(err => {
+	try {
+		const response = await axios.get(`http://${ip.address()}:${Debug('OPTIONS').access}/build`, {
+			data: {
+				uid: SET
+			}
+		});
+		return response.data?.Return || false;
+	} catch (err) {
 		return false;
-	});
-	return await PDFGet['Return'];
+	}
 };
 
 
-const lastRequestTimes = new Map();
-let lastGlobalRequest = 0;
-let globalQueue = Promise.resolve();
 
 // ==================================================
-// 🤖 WhatsApp Bot — Menu + IA 
+// 🤖 WHATSAPP BOT — Atendimento Virtual (Jhow)
 // ==================================================
-client.on('message', async msg => {
-	const nomeContato = msg._data.notifyName;
 
-	if (msg.type.toLowerCase() == "e2e_notification") return null;
-	if (msg.body == "") return null;
-	if (msg.from.includes("@g.us")) return null;
+const formatarDataBR = (strData) => {
+	if (!strData) return "";
+	const dataApenas = strData.split(" ")[0];
+	if (dataApenas.includes("/")) return dataApenas;
 
-	const NULLED = [undefined, "XXX", null, ""];
-	var isWid = msg.from.replace(/@.*/, '');
-	const RegEx = new Set("!@#:$%^&*()_");
-	for (let Return of isWid) {
-		if (RegEx.has(Return)) {
-			isWid = isWid.replace(Return, '%');
-		}
+	const partes = dataApenas.split("-");
+	if (partes.length === 3) {
+		const [ano, mes, dia] = partes;
+		return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano}`;
 	}
-	isWid = isWid.split("%")[0];
-	var WhatsApp = msg.from;
-	const isWhatsApp = isWid; 
-	if (msg.body.trim().toLowerCase() === "menu") {
-		if (activeMenus.has(msg.from)) {
-			await client.sendMessage(msg.from, "⚠️ Você já está dentro do menu.\nEnvie *0* para sair primeiro.");
-			return;
+	return strData;
+};
+
+const ProcessarEMontarMensagemBot = async (boletoAlvo, dadosCliente, proximoBoleto = null, isVencido = false) => {
+	try {
+		const tituloId = boletoAlvo?.titulo || boletoAlvo?.id || boletoAlvo?.Identifier || "";
+		if (!tituloId) return [];
+
+		const respostaMkAuthList = await MkAuth('all', tituloId, 'list');
+
+		let macCliente = "";
+		if (Array.isArray(respostaMkAuthList) && respostaMkAuthList.length > 0) {
+			macCliente = respostaMkAuthList[0].Connect || "";
+		} else if (respostaMkAuthList?.Connect) {
+			macCliente = respostaMkAuthList.Connect;
 		}
 
-		activeMenus.set(msg.from, true);
-		await client.sendMessage(
-			msg.from,
-			'📋 *Menu Principal*\n\n' +
-			'1️⃣ Boleto\n' +
-			'2️⃣ Suporte\n' +
-			'0️⃣ Encerrar\n\n' +
-			'👉 Responda com o número da opção:'
-		);
-		return;
-	}
+		const nomeCompleto = dadosCliente?.Client ? dadosCliente.Client.trim().split(' ')[0] : "";
+		const dataVenc = boletoAlvo?.vencimento ? formatarDataBR(boletoAlvo.vencimento) : "";
+		const valorBoleto = boletoAlvo?.valor || boletoAlvo?.value || "0.00";
 
-	if (activeMenus.has(msg.from)) {
-		if (activeSupportIA.has(msg.from)) {
-			try {
-				const _iaExit = (msg.body || '').toString().trim().toLowerCase();
-				if (["0", "sair", "tchau", "tchal"].includes(_iaExit)) {
-					activeSupportIA.delete(msg.from);
-					activeMenus.delete(msg.from);
-					await client.sendMessage(msg.from, "✅ Atendimento encerrado.\nObrigado pelo contato!");
-					return;
-				}
-				if (_iaExit === "menu") {
-					activeSupportIA.delete(msg.from);
-					activeMenus.set(msg.from, true);
-					await client.sendMessage(
-						msg.from,
-						'📋 *Menu Principal*\n\n' +
-						'1️⃣ Boleto\n' +
-						'2️⃣ Suporte\n' +
-						'0️⃣ Encerrar\n\n' +
-						'👉 Responda com o número da opção:'
-					);
-					return;
-				}
-			} catch (e) {
-				console.error('IA exit handler error:', e?.message || e);
-			}
+		const tituloStatus = isVencido ?
+			"*1 Fatura Vencida*" :
+			"*1 Fatura em Aberto*";
 
-			try {
-				const chat = await msg.getChat();
-				const Engine = Debug('OPTIONS').engine;
-				const Level = parseInt(Debug("ENGINE", "*", "DIRECT", Engine).level || 0);
-				const perUserDelay = parseInt(Debug('OPTIONS').airequestdelay) || 3000;
-				const globalDelay = parseInt(Debug('OPTIONS').aiglobaldelay) || 1000;
+		let textoInicial = `Olá, *${nomeCompleto}*, encontramos ${tituloStatus} : \n• Vencimento: ${dataVenc}\n• Valor: R$ ${valorBoleto}\n*Seguem os dados para pagamento 👇*`;
 
-				const now = Date.now();
-				const lastUser = lastRequestTimes.get(msg.from) || 0;
-				const sinceUser = now - lastUser;
-				const sinceGlobal = now - lastGlobalRequest;
-				const waitUser = Math.max(0, perUserDelay - sinceUser);
-				const waitGlobal = Math.max(0, globalDelay - sinceGlobal);
-				const totalWait = Math.max(waitUser, waitGlobal);
+		let templateMsg = `${textoInicial}##{"uid":"${macCliente}","find":"${tituloId}"}##`;
 
-				if (Level === 0) {
-					globalQueue = globalQueue.then(async () => {
-						try {
-							if (totalWait > 0) {
-								const typingInterval = setInterval(async () => {
-									try { await chat.sendStateTyping(); } catch {}
-								}, 4000);
+		if (proximoBoleto) {
+			const dataProxVenc = formatarDataBR(proximoBoleto.vencimento);
+			const valorProx = proximoBoleto.valor || proximoBoleto.value || "0.00";
+			templateMsg += `📌 *Aviso:* Sua próxima fatura vence em *${dataProxVenc}* no valor de *R$ ${valorProx}*.`;
+		}
 
-								await new Promise(r => setTimeout(r, totalWait));
-								clearInterval(typingInterval);
-								try { await chat.clearState(); } catch {}
-							}
+		const MensagemParts = templateMsg.replaceAll("\\n", "\r\n").split("##");
+		const FUNCTION = [Debug('MKAUTH').bar, Debug('MKAUTH').pix, Debug('MKAUTH').qrpix, Debug('MKAUTH').qrlink, Debug('MKAUTH').pdf];
 
-							lastRequestTimes.set(msg.from, Date.now());
-							lastGlobalRequest = Date.now();
+		const Constructor = new Promise(async (resolve) => {
+			let ArrayData = [];
+			let Radeon = {
+				Title: tituloId,
+				Name: 'Mwsm',
+				Message: []
+			};
+			let RETURNS = [];
 
-							const tLevel = parseInt(Debug('OPTIONS').typingspeed);
-							const multiplier = 1 + (5 - tLevel) * 0.25;
-							const baseTime = 800 * multiplier;
-							const extraPerChar = 25 * multiplier;
-							const maxTime = 4000 * multiplier;
-							const estimatedDelay = Math.min(baseTime + msg.body.length * extraPerChar, maxTime);
+			const hasJson = MensagemParts.some(Row => testJSON(Row));
+			const isFuncEnabled = FUNCTION.includes('true') || FUNCTION.includes('1');
 
-							await chat.sendStateTyping();
-							await new Promise(resolve => setTimeout(resolve, estimatedDelay));
-							await chat.clearState();
-
-							const reply = await askAI(msg.body);
-							await client.sendMessage(msg.from, reply, { quotedMessageId: undefined });
-						} catch (err) {
-							console.error("Erro ao processar IA (free):", err.message);
+			if (hasJson && isFuncEnabled && Boolean(Debug('MKAUTH').module)) {
+				for (const SendItem of MensagemParts) {
+					if (testJSON(SendItem)) {
+						let ParsedJson = SendItem.toString().replace('"', '').split(',');
+						let isUid = ParsedJson[0].replace(/[{\}\\"]/g, '');
+						if (isUid.split(':').length === 2) {
+							isUid = isUid.split(':')[1];
+						} else {
+							isUid = isUid.replace(isUid.split(':')[0], '').replace(/^:+/, '');
 						}
-					}).catch(e => console.error("Erro na fila global:", e.message));
-				} else {
-					const tLevel = parseInt(Debug('OPTIONS').typingspeed);
+						let isFind = ParsedJson[1].replace(/[^0-9]/g, '');
+
+						try {
+							const Synchronization = await MkAuth(isUid, isFind);
+
+							if (Boolean(Debug('MKAUTH').bar)) RETURNS.push('Bar');
+							if (Boolean(Debug('MKAUTH').pix)) RETURNS.push('Pix');
+							if (Boolean(Debug('MKAUTH').qrpix)) RETURNS.push('QRCode');
+							if (Boolean(Debug('MKAUTH').qrlink)) RETURNS.push('Link');
+							if (Boolean(Debug('MKAUTH').pdf)) RETURNS.push('Boleto');
+
+							if (!["pago", "paid", "Error", "Null"].includes(Synchronization.Status)) {
+								if (Array.isArray(Synchronization.Payments)) {
+									Synchronization.Payments.forEach((GET) => {
+										if (RETURNS.includes(GET.caption)) {
+											let SendData = GET.value;
+											if (GET.caption === 'QRCode') {
+												SendData = ensureMessageMedia(new MessageMedia('image/png', GET.value, GET.caption));
+											}
+											if (SendData !== '') ArrayData.push(SendData);
+										}
+									});
+								}
+								Radeon.Message = ArrayData;
+							} else {
+								Radeon.Message = Synchronization.Status;
+							}
+						} catch (err) {
+							Radeon.Message = false;
+						}
+						break;
+					}
+				}
+				resolve(Radeon);
+			} else {
+				resolve(Radeon);
+			}
+		});
+
+		const Reconstructor = new Promise(async (resolve) => {
+			const mediaItems = MensagemParts.filter(Send =>
+				Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))
+			);
+
+			if (mediaItems.length > 0) {
+				let isArray = {};
+				const Cloud = async (mediaUrl) => {
+					const response = await axios.get(mediaUrl, {
+						responseType: 'arraybuffer'
+					});
+					const mimetype = response.headers['content-type'];
+					const attachment = Buffer.from(response.data).toString('base64');
+					return ensureMessageMedia(new MessageMedia(mimetype, attachment, 'Media'));
+				};
+
+				await Promise.all(mediaItems.map(async (Send) => {
+					try {
+						isArray[Send] = await Cloud(Send);
+					} catch (err) {}
+				}));
+				resolve(isArray);
+			} else {
+				resolve(undefined);
+			}
+		});
+
+		const Retorno = await Promise.all([Constructor, Reconstructor]);
+
+		const invalidMessages = ["Fail", "False", "Fatal", false, "Error", "Null"];
+		let Boleto, PDF2Base64;
+
+		if (Retorno[0].Message !== undefined && !invalidMessages.includes(Retorno[0].Message)) {
+			for (let i = 0; i < Retorno[0].Message.length; i++) {
+				if (typeof Retorno[0].Message[i] === 'string') {
+					if (Retorno[0].Message[i].indexOf("boleto.hhvm") > -1) {
+						const UID = Retorno[0].Message[i].split("=")[1];
+						Boleto = await Build(Retorno[0].Message[i]);
+
+						PDF2Base64 = await new Promise((resolve) => {
+							if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Boleto.includes(Row))) {
+								const Cloud = async (Url) => {
+									let mimetype;
+									const attachment = await axios.get(Url, {
+										responseType: 'arraybuffer'
+									}).then(response => {
+										mimetype = response.headers['content-type'];
+										return response.data.toString('base64');
+									});
+									return new MessageMedia(mimetype, attachment, 'Fatura');
+								};
+
+								Cloud(Boleto).then(Return => {
+									resolve(Return);
+								}).catch(err => {
+									resolve(undefined);
+								});
+							} else {
+								resolve(undefined);
+							}
+						});
+
+						if (await PDF2Base64) {
+							Retorno[0].Message[i] = await PDF2Base64;
+						}
+
+						if (fs.existsSync(__dirname + "/" + UID + ".pdf")) {
+							try {
+								fs.unlinkSync(__dirname + "/" + UID + ".pdf");
+							} catch (e) {}
+						}
+					}
+				}
+			}
+		}
+
+		let Assembly = [];
+
+		MensagemParts.forEach((Send) => {
+			if (testJSON(Send)) {
+				if (Retorno[0].Message !== undefined && !invalidMessages.includes(Retorno[0].Message)) {
+					Retorno[0].Message.forEach(m => Assembly.push(m));
+				}
+			} else if (Debug('ATTACHMENTS', 'SUFFIXES', 'MULTIPLE').some(Row => Send.includes(Row))) {
+				if (Retorno[1] && Retorno[1][Send]) {
+					Assembly.push(Retorno[1][Send]);
+				} else if (typeof Send !== 'string') {
+					Assembly.push(Send);
+				}
+			} else {
+				if (Send && Send.trim() !== "") {
+					Assembly.push(Send);
+				}
+			}
+		});
+
+		return Assembly;
+
+	} catch (err) {
+		return [];
+	}
+};
+
+if (typeof activeSessions === 'undefined') global.activeSessions = new Map();
+if (typeof activeSupportIA === 'undefined') global.activeSupportIA = new Map();
+
+client.on('message', async msg => {
+	try {
+		if (msg.type.toLowerCase() === "e2e_notification") return null;
+		if (!msg.body || msg.body.trim() === "") return null;
+		if (msg.from.includes("@g.us")) return null;
+
+		const userPhone = msg.from;
+		const text = msg.body.trim();
+		const lowerText = text.toLowerCase();
+
+		const NULLED = [undefined, "XXX", null, ""];
+		let isWid = msg.from.replace(/@.*/, '');
+		const RegEx = new Set("!@#:$%^&*()_");
+		for (let Return of isWid) {
+			if (RegEx.has(Return)) {
+				isWid = isWid.replace(Return, '%');
+			}
+		}
+		isWid = isWid.split("%")[0];
+		const WhatsApp = msg.from;
+		const isWhatsApp = isWid;
+
+		const isEngineActive = Boolean(Debug('ENGINE', 'ACTIVE', 'DIRECT', Debug('OPTIONS').engine)?.active);
+
+		if (isEngineActive) {
+
+			if (activeSupportIA.has(userPhone)) {
+				const _iaExit = lowerText;
+
+				if (["0", "sair", "tchau", "tchal", "encerrar", "cancelar"].includes(_iaExit)) {
+					activeSupportIA.delete(userPhone);
+					activeSessions.delete(userPhone);
+					await client.sendMessage(userPhone, "✅ *Atendimento encerrado.* Obrigado pelo contato!");
+					return;
+				}
+
+				if (_iaExit === "menu") {
+					activeSupportIA.delete(userPhone);
+					activeSessions.set(userPhone, {
+						step: 'MENU'
+					});
+					const menuBoasVindas =
+						`Olá! Sou o *Jhow*, seu atendente virtual. 🤖\n` +
+						`Como posso te ajudar hoje?\n\n` +
+						`1️⃣ Contratar um plano\n` +
+						`2️⃣ Segunda via de fatura\n` +
+						`3️⃣ Suporte técnico\n` +
+						`0️⃣ Sair\n\n` +
+						`👉 *Responda com o número da opção desejada:*`;
+
+					await client.sendMessage(userPhone, menuBoasVindas);
+					return;
+				}
+
+				try {
+					const chat = await msg.getChat();
+					const tLevel = parseInt(Debug('OPTIONS').typingspeed) || 3;
 					const multiplier = 1 + (5 - tLevel) * 0.25;
 					const baseTime = 800 * multiplier;
 					const extraPerChar = 25 * multiplier;
@@ -4852,176 +6085,367 @@ client.on('message', async msg => {
 					await chat.clearState();
 
 					const reply = await askAI(msg.body);
-					await client.sendMessage(msg.from, reply, { quotedMessageId: undefined });
+					await client.sendMessage(userPhone, reply, {
+						quotedMessageId: undefined
+					});
+
+				} catch (err) {
+					try {
+						const reply = await askAI(msg.body);
+						await client.sendMessage(userPhone, reply, {
+							quotedMessageId: undefined
+						});
+					} catch (e2) {}
+				}
+				return;
+			}
+
+			let session = activeSessions.get(userPhone);
+
+			if (["0", "sair", "encerrar", "cancelar"].includes(lowerText)) {
+				activeSessions.delete(userPhone);
+				activeSupportIA.delete(userPhone);
+				await client.sendMessage(userPhone, "✅ *Atendimento encerrado.* Obrigado pelo contato!");
+				return;
+			}
+
+			if (!session) {
+				activeSessions.set(userPhone, {
+					step: 'MENU'
+				});
+				const menuBoasVindas =
+					`Olá! Sou o *Jhow*, seu atendente virtual. 🤖\n` +
+					`Como posso te ajudar hoje?\n\n` +
+					`1️⃣ Contratar um plano\n` +
+					`2️⃣ Segunda via de fatura\n` +
+					`3️⃣ Suporte técnico\n` +
+					`0️⃣ Sair\n\n` +
+					`👉 *Responda com o nº da opção :*`;
+
+				await client.sendMessage(userPhone, menuBoasVindas);
+				return;
+			}
+
+			if (session.step === 'MENU') {
+				if (text === '1') {
+					await client.sendMessage(userPhone, "🛒 *Contratação de Planos*\n\nEm breve você poderá contratar diretamente por aqui.\n\n_Digite *0* para encerrar._");
+					return;
 				}
 
-			} catch (err) {
-				console.error("Erro ao simular digitando:", err.message);
-				try {
-					const reply = await askAI(msg.body);
-					await client.sendMessage(msg.from, reply, { quotedMessageId: undefined });
-				} catch (e2) {
-					console.error("Erro no fallback de IA:", e2.message);
+				if (text === '2') {
+					session.step = 'AGUARDANDO_CPF';
+					activeSessions.set(userPhone, session);
+					await client.sendMessage(userPhone, "📄 *Segunda Via de Fatura*\n\nPor favor, digite o seu *CPF*:");
+					return;
 				}
+
+				if (text === '3') {
+					await client.sendMessage(userPhone, '🤖 Você está agora em atendimento de suporte com IA. Envie sua dúvida.');
+					activeSupportIA.set(userPhone, true);
+					return;
+				}
+
+				await client.sendMessage(userPhone, "⚠️ *Opção inválida.*\nResponda 1, 2, 3 ou 0.");
+				return;
+			}
+
+			if (session.step === 'AGUARDANDO_CPF') {
+				const cpfLimpo = text.replace(/\D/g, '');
+
+				if (!/^\d{11}$/.test(cpfLimpo)) {
+					await client.sendMessage(userPhone, "⚠️ *CPF inválido!* Digite os 11 números do seu CPF:");
+					return;
+				}
+
+				await client.sendMessage(userPhone, "🔍 *Buscando faturas... Por favor, aguarde um instante.*");
+
+				const chat = await msg.getChat();
+				await chat.sendStateTyping();
+
+				const resultado = await GetBoletosFiltrados(cpfLimpo);
+
+				if (!resultado) {
+					await chat.clearState();
+					await client.sendMessage(userPhone, "❌ Nenhum cadastro encontrado para este CPF.\nPor favor, digite o CPF do titular\n\nEnvie *0* para sair.");
+					return;
+				}
+
+				const temVencidos = resultado.Dados?.Due && resultado.Dados.Due.length > 0;
+				const temAberto = !!resultado.Dados?.Open;
+
+				const boletoAlvo = temVencidos ? resultado.Dados.Due[0] : (temAberto ? resultado.Dados.Open : null);
+				const proximoBoleto = (temVencidos && temAberto) ? resultado.Dados.Open : null;
+
+				if (!boletoAlvo) {
+					await chat.clearState();
+					await client.sendMessage(userPhone, `Olá *${resultado.Client}*, você não possui nenhuma fatura em aberto ou vencida! ✅`);
+					session.step = 'MENU';
+					activeSessions.set(userPhone, session);
+					return;
+				}
+
+				const dadosCliente = {
+					Client: resultado.Client,
+					User: resultado.User || resultado.login || resultado.Login || ""
+				};
+
+				await chat.sendStateTyping();
+
+				const itensParaEnviar = await ProcessarEMontarMensagemBot(boletoAlvo, dadosCliente, proximoBoleto, temVencidos);
+
+				for (let i = 0; i < itensParaEnviar.length; i++) {
+					await chat.sendStateTyping();
+
+					let item = itensParaEnviar[i];
+					const mediaItem = ensureMessageMedia(item);
+					let payloadToSend = (typeof mediaItem === 'string') ? isEmoji(mediaItem) : mediaItem;
+
+					const isPixCode = typeof payloadToSend === 'string' && REGEX_PIX_EMV.test(payloadToSend);
+
+					if (isPixCode) {
+						payloadToSend = payloadToSend.replace(/\./g, '.\u200B');
+						await client.sendMessage(userPhone, payloadToSend, {
+							linkPreview: false
+						});
+					} else {
+						await client.sendMessage(userPhone, payloadToSend);
+					}
+
+					await new Promise(r => setTimeout(r, 1000));
+				}
+
+				await client.sendMessage(userPhone, "✅ *Atendimento encerrado.* Obrigado pelo contato!");
+				await chat.clearState();
+				activeSessions.delete(userPhone);
+				return;
+			}
+		}
+
+		if (msg.body.toUpperCase().includes("TOKEN") && NULLED.includes(Debug('OPTIONS').token)) {
+			if (msg.body.includes(":") && (msg.body.split(":")[1].length === 7)) {
+				db.run("UPDATE options SET token=?", [msg.body.split(":")[1]], (err) => {
+					if (err) throw err;
+					global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').saved);
+					msg.reply(Debug('CONSOLE').saved);
+					Password = [msg.body.split(":")[1], Password[1]];
+				});
+			} else {
+				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wrong);
+				msg.reply(Debug('CONSOLE').wrong);
 			}
 			return;
 		}
 
-		if (msg.body.startsWith('1')) {
-			await client.sendMessage(msg.from, '🔗 Aqui está o link do seu boleto: https://seudominio.com/boleto');
-			return;
-		}
+		db.get("SELECT * FROM replies WHERE whats = ?", [isWhatsApp], (err, REPLIES) => {
+			if (err) {
+				return;
+			}
 
-		if (msg.body.startsWith('2')) {
-			await client.sendMessage(msg.from, '🤖 Você está agora em atendimento de suporte com IA. Envie sua dúvida.');
-			activeSupportIA.set(msg.from, true);
-			return;
-		}
+			let MsgBox = false;
+			const maxAllowed = parseInt(Debug('OPTIONS').count) || 0;
 
-		if (msg.body.startsWith('0')) {
-			await client.sendMessage(msg.from, '✅ Atendimento encerrado.\nObrigado pelo contato!');
-			activeMenus.delete(msg.from);
-			return;
-		}
-	}
-	if (msg.body.toUpperCase().includes("TOKEN") && NULLED.includes(Debug('OPTIONS').token)) {
-		if (msg.body.includes(":") && (msg.body.split(":")[1].length == 7)) {
-			db.run("UPDATE options SET token=?", [msg.body.split(":")[1]], (err) => {
-				if (err) throw err;
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').saved);
-				global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').saved);
-				msg.reply(Debug('CONSOLE').saved);
-			});
-		} else {
-			console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wrong);
-			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').wrong);
-			msg.reply(Debug('CONSOLE').wrong);
-		}
-		return;
-	}
-
-	db.serialize(() => {
-		db.get("SELECT * FROM replies WHERE whats='" + isWhatsApp + "'", (err, REPLIES) => {
-			if (REPLIES == undefined) {
-				db.run("INSERT INTO replies(whats,date,count) VALUES(?, ?, ?)", [isWhatsApp, register, 1], (err) => {
-					if (err) {
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-					}
-					console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').inserted);
+			if (!REPLIES) {
+				db.run("INSERT INTO replies(whats, date, count) VALUES(?, ?, ?)", [isWhatsApp, register, 1], (err) => {
 					global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').inserted);
-					MsgBox = true;
 				});
-
+				MsgBox = true;
 			} else {
-
 				if (register.toString() > REPLIES.date) {
 					db.run("UPDATE replies SET date=?, count=? WHERE whats=?", [register, 1, isWhatsApp], (err) => {
-						if (err) {
-							console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-						}
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
 						global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
-						MsgBox = true;
 					});
+					MsgBox = true;
 				} else {
-					if (Debug('OPTIONS').count > REPLIES.count) {
-						COUNT = REPLIES.count + 1;
-						db.run("UPDATE replies SET count=? WHERE whats=?", [COUNT, isWhatsApp], (err) => {
+					if (maxAllowed > REPLIES.count) {
+						const newCount = REPLIES.count + 1;
+						db.run("UPDATE replies SET count=? WHERE whats=?", [newCount, isWhatsApp], (err) => {
 							if (err) throw err;
-							console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
 							global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').updated);
-							MsgBox = true;
 						});
+						MsgBox = true;
 					} else {
-						console.log('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').found);
 						global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').found);
 						MsgBox = false;
-
 					}
+				}
+			}
+
+			const isOnBot = Boolean(Debug('OPTIONS').onbot);
+			const isReplyMode = Boolean(Debug('OPTIONS').replyes);
+			const responseText = Debug('OPTIONS').response;
+
+			if (MsgBox && isOnBot && responseText) {
+				if (isReplyMode) {
+					msg.reply(responseText);
+				} else {
+					sendChunkedMessage(client, WhatsApp, responseText);
 				}
 			}
 		});
 
-		db.get("SELECT * FROM replies WHERE whats='" + isWhatsApp + "'", (err, REPLIES) => {
-			if (err) {
-				console.log('> ' + Debug('OPTIONS').appname + ' : ' + err)
-			}
-			if (REPLIES != undefined) {
-				if (MsgBox && Boolean(Debug('OPTIONS').onbot) && (msg.body != null || msg.body == "0" || msg.type == 'ptt' || msg.hasMedia)) {
-					if (Boolean(Debug('OPTIONS').replyes)) {
-						msg.reply(Debug('OPTIONS').response);
-					} else {
-						const Mensagem = (Debug('OPTIONS').response).replaceAll("\\n", "\r\n").split("##");
-						Mensagem.some(function(Send, index) {
-							setTimeout(function() {
-								client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
-									console.log(err);
-									WwjsVersion(false);
-								});
-							}, Math.floor(Delay + Math.random() * 1000));
-						});
-					}
-				}
-			}
-		});
-
-	});
+	} catch (globalErr) {}
 });
-
 
 client.on('call', async (call) => {
-    var isWid = (call.from || '').split('@')[0];
-    const RegEx = new Set("!@#:$%^&*()_");
-    for (let Return of isWid) {
-        if (RegEx.has(Return)) {
-            isWid = isWid.replace(Return, '%');
-        }
-    }
-    isWid = isWid.split("%")[0];
-    var WhatsApp = call.from;
+	var isWid = (call.from || '').split('@')[0];
+	const RegEx = new Set("!@#:$%^&*()_");
+	for (let Return of isWid) {
+		if (RegEx.has(Return)) {
+			isWid = isWid.replace(Return, '%');
+		}
+	}
+	isWid = isWid.split("%")[0];
+	var WhatsApp = call.from;
 
-    if (Boolean(Debug('OPTIONS').reject)) {
+	const enviarAlertaCall = async () => {
+		if (Boolean(Debug('OPTIONS').alert)) {
+			const alertConfig = Debug('OPTIONS').call || "";
+			const Mensagem = alertConfig.replaceAll("\\n", "\r\n").split("##");
 
-        const sleepTime = Math.floor(Debug('OPTIONS').sleep + Math.random() * 1000);
+			Mensagem.some(function(Send, index) {
+				setTimeout(function() {
+					client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
+						if (typeof WwjsVersion === 'function') WwjsVersion(false);
+					});
+				}, Math.floor((global.Delay || 2000) + Math.random() * 1000) * (index + 1));
+			});
+		}
+	};
 
-        setTimeout(async () => {
-            try {
-                await call.reject();
-                enviarAlertaCall();
-            } catch (err) {
-                
-                try {
-                    await client.pupPage.evaluate((id) => {
-                        window.WWebJS.rejectCall(id);
-                    }, call.id);
-                    enviarAlertaCall();
-                } catch (e) {
-                }
-            }
-        }, sleepTime);
-    }
+	if (Boolean(Debug('OPTIONS').reject)) {
+		const sleepTime = Math.floor((Debug('OPTIONS').sleep || 1000) + Math.random() * 1000);
 
-    function enviarAlertaCall() {
-        if (Boolean(Debug('OPTIONS').alert)) {
-            const Mensagem = (Debug('OPTIONS').call).replaceAll("\\n", "\r\n").split("##");
-            Mensagem.some(function(Send, index) {
-                setTimeout(function() {
-                    client.sendMessage(WhatsApp, isEmoji(Send)).then().catch(err => {
-                        if (typeof WwjsVersion === 'function') WwjsVersion(false);
-                    });
-                }, Math.floor(Delay + Math.random() * 1000) * (index + 1));
-            });
-        }
-    }
+		setTimeout(async () => {
+			try {
+				await call.reject();
+				await enviarAlertaCall();
+			} catch (err) {
+				try {
+					await client.pupPage.evaluate(async (callDataId) => {
+						if (window.WWebJS && typeof window.WWebJS.rejectCall === 'function') {
+							return window.WWebJS.rejectCall(callDataId);
+						}
+
+						if (window.Store && window.Store.VoipInterop && typeof window.Store.VoipInterop.rejectCall === 'function') {
+							return await window.Store.VoipInterop.rejectCall(callDataId);
+						}
+
+						if (window.Store && window.Store.CallCollection) {
+							const activeCall = typeof window.Store.CallCollection.getActiveCall === 'function' ?
+								window.Store.CallCollection.getActiveCall() :
+								window.Store.CallCollection.get(callDataId);
+
+							if (activeCall && typeof activeCall.reject === 'function') {
+								return await activeCall.reject();
+							}
+						}
+					}, call.id);
+
+					await enviarAlertaCall();
+				} catch (e) {
+					console.error('> Call Reject Error:', e);
+				}
+			}
+		}, sleepTime);
+	}
 });
+
+
+const Port = process.env.PORT || Debug('OPTIONS').access;
+const serverIp = ip.address();
+serverAdapter.setBasePath('/panel');
+
+
+
+createBullBoard({
+	queues: [new BullMQAdapter(messageQueue)],
+	serverAdapter: serverAdapter,
+	options: {
+		uiConfig: {
+			boardTitle: Debug('OPTIONS').appname,
+			boardLogo: {
+				path: '/icon.png',
+				width: '120px',
+				height: '40px',
+			},
+			favIcon: {
+				default: '/icon.png',
+				alternative: '/icon.png',
+			},
+			miscLinks: [{
+					text: 'Manager',
+					url: "javascript:(function(){ " +
+						"   var overlay = window.parent.$('#preload-overlay'); " +
+						"   var apiClass = window.parent.$('.API'); " +
+						"   var apiId = window.parent.$('#API'); " +
+						"   overlay.css('display', 'flex').hide().fadeIn(150, function() { " +
+						"       apiClass.hide(); " +
+						"       setTimeout(function() { " +
+						"           apiId.hide().css('opacity', '0').show().fadeTo(300, 1); " +
+						"           overlay.fadeOut(300); " +
+						"       }, 1500); " +
+						"   }); " +
+						"})();"
+				},
+				{
+					text: 'Refresh',
+					url: "javascript:(function(){ " +
+						"   var pWin = window.parent || window; " +
+						"   var overlay = pWin.$('#preload-overlay'); " +
+						"   var frame = pWin.$('iframe'); " +
+						"   if (overlay && overlay.length) { " +
+						"       overlay.css('display', 'flex').hide().fadeIn(150, function() { " +
+						"           if (frame && frame.length) { " +
+						"               frame.one('load', function() { " +
+						"                   overlay.fadeOut(300); " +
+						"               }); " +
+						"           } else { " +
+						"               pWin.setTimeout(function(){ overlay.fadeOut(300); }, 2000); " +
+						"           } " +
+						"           window.location.reload(); " +
+						"       }); " +
+						"   } else { " +
+						"       window.location.reload(); " +
+						"   } " +
+						"})();"
+				}
+			]
+		}
+	}
+});
+
+
+app.get('/panel', (req, res) => {
+	res.redirect('/panel/queue/Row');
+});
+
+
+const protectPanel = (req, res, next) => {
+	if (isPanelAuthorized) {
+		next();
+	} else {
+		res.status(403).send(`
+            <script>
+                alert('Access denied! Please log in on the main page.');
+                try {
+                    window.close();
+                } catch (e) {}
+                setTimeout(function() {
+                    window.location.href = '/';
+                }, 100);
+            </script>
+        `);
+	}
+};
+
+app.use('/panel', protectPanel, serverAdapter.getRouter());
 
 client.initialize();
 console.log("\nAPI is Ready!\n");
-const Port = process.env.PORT || Debug('OPTIONS').access;
-server.listen(Port, ip.address(), function() {
-	console.log('Server Running on *' + ip.address() + ':' + Port);
-});
 
+server.listen(Port, ip.address(), () => {
+	console.log(`Server Running on *${ip.address()}:${Port}`);
+});
 
 // ----------------------------------------------------
 // Reusable helpers

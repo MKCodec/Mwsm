@@ -7,6 +7,17 @@ html {
     display: none;
 }
 
+
+
+.API {
+display: none;
+position: absolute;
+top: 0; 
+left: 0; 
+width: 100%; 
+height: 100vh;
+}
+
 body {
     padding: 0;
     margin: 0;
@@ -1258,6 +1269,18 @@ button.ui-button::-moz-focus-inner {
     position: absolute;
     z-index: 9999;
     max-width: 300px;
+}
+
+.ui-tooltip.tooltip-inverted {
+    background: #ffffff !important;       
+    color: #000000 !important;          
+    border: 1px solid #ccc !important;     
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2) !important; 
+    z-index: 99999999999999 !important;    
+}
+
+.ui-tooltip.tooltip-inverted .ui-tooltip-content {
+    color: #000000 !important;
 }
 
 body .ui-tooltip {
@@ -6201,6 +6224,20 @@ input {
     display: block;
 }
 
+#preload-overlay {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background-color: #111827 !important;
+    z-index: 2147483647 !important;
+    display: none;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-direction: column !important;
+}
+
 .loader {
     color: #2f4f4f;
     width: fit-content;
@@ -7111,6 +7148,10 @@ fieldset[disabled] .btn-link:focus {
     font-size: 20px;
     color: #FFF;
     transition: color 0.5s ease; /* anima  o de 0.5s ao mudar cor */
+}
+
+#askip{
+display:none;
 }
 
 .ui-tooltip {
@@ -8104,7 +8145,7 @@ thead {
     height: 290px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999;
+    z-index: 999999999999;
     display: block;
 }
 
@@ -8208,7 +8249,7 @@ legend {
     height: 238px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999;
+    z-index: 999999999999;
     display: block;
     margin: 7px 10px 10px 12px;
 }
@@ -8220,7 +8261,7 @@ legend {
     height: 238px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999;
+    z-index: 999999999999;
     display: none;
     margin: 7px 10px 10px 12px;
 }
@@ -8232,7 +8273,7 @@ legend {
     height: 238px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999999;
+    z-index: 999999999999;
     display: block;
     margin: 7px 10px 10px 12px;
 }
@@ -8244,7 +8285,7 @@ legend {
     height: 238px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999999;
+    z-index: 999999999999;
     display: block;
     margin: 7px 10px 10px 12px;
 }
@@ -8258,7 +8299,7 @@ legend {
     height: 238px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999;
+    z-index: 999999999999;
     display: block;
     margin: 7px 10px 10px 12px;
     opacity: 0.5;
@@ -8272,7 +8313,7 @@ legend {
     height: 238px;
     background: #FFF;
     position: absolute;
-    z-index: 9999999999999999999999999999;
+    z-index: 999999999999;
     display: block;
     margin: 7px 10px 10px 12px;
     opacity: 0.5;
@@ -8360,7 +8401,7 @@ legend {
     /* Black w/ opacity */
 }
 
-.modal-menu {
+.modal-menu, .modal-send {
     display: none;
 }
 
@@ -8745,4 +8786,15 @@ option {
 #qrcode{
     width: 276px;
     height: 276px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+    }
+
+#wwjs.disabled-panel {
+    cursor: default !important; /* Mantém a setinha padrão do mouse */
+    pointer-events: none;       /* Impede totalmente o clique */
+    opacity: 0.6;               /* Opcional: deixa levemente transparente para indicar que está desativado */
 }
