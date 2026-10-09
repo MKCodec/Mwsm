@@ -794,9 +794,11 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 		const isUpdateAllowed = Boolean(Debug('RELEASE').isupdate) || Boolean(GUPForce);
 
 		if (SET && isUpdateAllowed) {
+			// 1. ATUALIZAÇÃO DE DB PRIMEIRO
 			const register = await Dataset('RELEASE', 'MWSM', remoteRelease, 'UPDATE');
 
 			if (register) {
+				// 2. DISPAROS DE SOCKET ANTES DE BAIXAR O MWSM.JS
 				global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
 				global.io.emit('upgrade', true);
 				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isupdated}`);
@@ -805,6 +807,7 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 				const baseUrl = "https://raw.githubusercontent.com/MKCodec/Mwsm/main";
 				const targetDir = "/var/api/Mwsm";
 
+				// 3. DOWNLOAD DOS ARQUIVOS SECUNDÁRIOS / ESTÁTICOS
 				const staticFiles = [
 					'script.js',
 					'style.css',
@@ -820,6 +823,7 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 					}
 				}
 
+				// 4. DOWNLOAD E AJUSTE DO MWSM.JS POR ÚLTIMO (Gatilho do PM2)
 				try {
 					await wget(`${baseUrl}/mwsm.js`, `${targetDir}/mwsm.js`);
 
@@ -833,6 +837,7 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 					console.error("Erro ao baixar e ajustar mwsm.js:", err.message);
 				}
 
+				// 5. FALLBACKS DE REINÍCIO (Caso o PM2 watch não esteja ativo)
 				try {
 					await exec('npm run restart:mwsm');
 				} catch (err) {}
@@ -1219,7 +1224,9 @@ const isAllowedTime = () => {
 const writeLog = (message, data = null) => {
 	try {
 		const logPath = path.join(__dirname, 'webhook.log');
-		const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+		const timestamp = new Date().toLocaleString('pt-BR', {
+			timeZone: 'America/Sao_Paulo'
+		});
 		let logContent = `[${timestamp}] ${message}`;
 
 		if (data !== null) {
@@ -1299,7 +1306,7 @@ const GetSchedule = async () => {
 
 					if (IsPaidVal >= 1 && Local.process !== "success" && Bank.Payment === "paid") {
 						const bankUnlockStr = bankUnlockBool ? 'true' : 'false';
-						
+
 						await link.prepare('UPDATE scheduling SET status=?, cash=?, gateway=?, unlock=? WHERE title=?')
 							.run(Bank.Payment, Bank.Cash, Bank.Gateway, bankUnlockStr, Target);
 					} else if (CheckVal >= 1 && Local.process !== "wait" && Local.process !== "success") {
@@ -1349,7 +1356,7 @@ const GetSchedule = async () => {
 		if (DataBase && DataBase.length >= 1) {
 			if (onPayConfig && isPaid >= 1) {
 				const RawPaid = await link.prepare('SELECT * FROM scheduling WHERE status=? AND NOT process=?').get('paid', 'success');
-				
+
 				if (RawPaid != undefined) {
 					const Paid = {
 						Identifier: RawPaid.title,
@@ -1399,14 +1406,14 @@ const GetSchedule = async () => {
 								status: 'paid'
 							});
 						}
-						
+
 						const finalBankUnlock = Boolean(isBank.unLock) ? 'true' : 'false';
 						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('success', finalBankUnlock, Paid.Identifier);
 					}
 				}
 			} else if (onLockConfig && isLock >= 1) {
 				const RawLock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('lock', 'false');
-				
+
 				if (RawLock != undefined) {
 					const Lock = {
 						Identifier: RawLock.title,
@@ -1458,7 +1465,7 @@ const GetSchedule = async () => {
 				}
 			} else if (onUnlockConfig && isUnLock >= 1) {
 				const RawUnLock = await link.prepare('SELECT * FROM scheduling WHERE process=? AND unlock=?').get('unlock', 'true');
-				
+
 				if (RawUnLock != undefined) {
 					const UnLock = {
 						Identifier: RawUnLock.title,
@@ -1510,7 +1517,7 @@ const GetSchedule = async () => {
 				}
 			} else if ((isWeek(DateTime(0))) && (isShift((DateTime(0).split(" ")[1]).split(":")[0])) || (validPhone(Playground) && Initialize)) {
 				const RawDue = await link.prepare('SELECT * FROM scheduling WHERE NOT status=? AND process=?').get('paid', 'wait');
-				
+
 				if (RawDue != undefined) {
 					const Due = {
 						Identifier: RawDue.title,
@@ -1557,7 +1564,7 @@ const GetSchedule = async () => {
 								if (global.io) {
 									global.io.emit('schedresume', Due.Identifier);
 								}
-								
+
 								const targetLockState = Boolean(isBank.unLock) ? 'true' : 'false';
 								const nextProcess = !Boolean(isBank.unLock) && Boolean(Debug('SCHEDULER').onlock) ? "lock" : "load";
 
@@ -1566,7 +1573,7 @@ const GetSchedule = async () => {
 								if (global.io) {
 									global.io.emit('schedresume', Due.Identifier);
 								}
-								
+
 								const targetLockState = Boolean(isBank.unLock) ? 'true' : 'false';
 								await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run("load", targetLockState, Due.Identifier);
 							}
@@ -1698,7 +1705,7 @@ function DateTime(Days = 0, Mode) {
 
 const GetBoletosFiltrados = async (CPF) => {
 	const cpfLimpo = String(CPF).replace(/\D/g, '');
-
+	const Owner = Boolean(Debug('MKAUTH').owner);
 	const rawData = await MkList(cpfLimpo, "titulos");
 
 	if (!rawData) return false;
@@ -1715,7 +1722,7 @@ const GetBoletosFiltrados = async (CPF) => {
 	if (listaTitulos.length === 0) return false;
 
 	const primeiroTitulo = listaTitulos[0];
-	const clienteNome = primeiroTitulo.nome || primeiroTitulo.nome_res || "Não Informado";
+	const clienteNome = Owner ? primeiroTitulo.nome_res : primeiroTitulo.nome;
 	const clienteCPF = primeiroTitulo.cpf_cnpj || cpfLimpo;
 
 	const uf = Debug('OPTIONS').timezone || 'SP';
@@ -1815,7 +1822,7 @@ const MkList = async (FIND, REFINE = "titulos", FORMAT = false) => {
 
 		if (typeof data === "string") {
 			let trimmedData = data.trim();
-			
+
 			if (!trimmedData.endsWith('}') && !trimmedData.endsWith(']')) {
 				const lastCloseObj = trimmedData.lastIndexOf('}');
 				const lastCloseArr = trimmedData.lastIndexOf(']');
@@ -1824,7 +1831,7 @@ const MkList = async (FIND, REFINE = "titulos", FORMAT = false) => {
 					trimmedData = trimmedData.substring(0, validEnd + 1);
 				}
 			}
-			
+
 			data = JSON.parse(trimmedData);
 		}
 
@@ -1859,9 +1866,9 @@ const MkList = async (FIND, REFINE = "titulos", FORMAT = false) => {
 		};
 
 		const formattedList = rawList.map(item => {
-			const Phone = item.celular
-				? String(item.celular).replace(/\D/g, '')
-				: "00000000000";
+			const Phone = item.celular ?
+				String(item.celular).replace(/\D/g, '') :
+				"00000000000";
 
 			const rawStatus = String(item.status || '').toLowerCase().trim();
 			const paymentStatus = statusMap[rawStatus] || rawStatus;
@@ -6201,6 +6208,70 @@ const ProcessarEMontarMensagemBot = async (boletoAlvo, dadosCliente, proximoBole
 	}
 };
 
+async function validarCPF(cpf) {
+	if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+
+	let soma = 0;
+	let resto;
+
+	for (let i = 1; i <= 9; i++) {
+		soma += parseInt(cpf.substring(i - 1, i)) * (11 - i);
+	}
+	resto = (soma * 10) % 11;
+	if (resto === 10 || resto === 11) resto = 0;
+	if (resto !== parseInt(cpf.substring(9, 10))) return false;
+
+	soma = 0;
+	for (let i = 1; i <= 10; i++) {
+		soma += parseInt(cpf.substring(i - 1, i)) * (12 - i);
+	}
+	resto = (soma * 10) % 11;
+	if (resto === 10 || resto === 11) resto = 0;
+	if (resto !== parseInt(cpf.substring(10, 11))) return false;
+
+	return true;
+}
+
+async function validarCNPJ(cnpj) {
+	if (cnpj.length !== 14 || /^(\d)\1{13}$/.test(cnpj)) return false;
+
+	let tamanho = cnpj.length - 2;
+	let numeros = cnpj.substring(0, tamanho);
+	let digitos = cnpj.substring(tamanho);
+	let soma = 0;
+	let pos = tamanho - 7;
+
+	for (let i = tamanho; i >= 1; i--) {
+		soma += numeros.charAt(tamanho - i) * pos--;
+		if (pos < 2) pos = 9;
+	}
+
+	let resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
+	if (resultado !== parseInt(digitos.charAt(0))) return false;
+
+	tamanho = tamanho + 1;
+	numeros = cnpj.substring(0, tamanho);
+	soma = 0;
+	pos = tamanho - 7;
+
+	for (let i = tamanho; i >= 1; i--) {
+		soma += numeros.charAt(tamanho - i) * pos--;
+		if (pos < 2) pos = 9;
+	}
+
+	resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
+	if (resultado !== parseInt(digitos.charAt(1))) return false;
+
+	return true;
+}
+
+async function validarCPFouCNPJ(documento) {
+	const docLimpo = documento.replace(/\D/g, '');
+	if (docLimpo.length === 11) return await validarCPF(docLimpo);
+	if (docLimpo.length === 14) return await validarCNPJ(docLimpo);
+	return false;
+}
+
 if (typeof activeSessions === 'undefined') global.activeSessions = new Map();
 if (typeof activeSupportIA === 'undefined') global.activeSupportIA = new Map();
 
@@ -6322,7 +6393,7 @@ client.on('message', async msg => {
 				if (text === '2') {
 					session.step = 'AGUARDANDO_CPF';
 					activeSessions.set(userPhone, session);
-					await client.sendMessage(userPhone, "📄 *Segunda Via de Fatura*\n\nPor favor, digite o seu *CPF*:");
+					await client.sendMessage(userPhone, "📄 *Segunda Via de Fatura*\n\nPor favor, digite o seu *CPF/CNPJ*:");
 					return;
 				}
 
@@ -6337,10 +6408,13 @@ client.on('message', async msg => {
 			}
 
 			if (session.step === 'AGUARDANDO_CPF') {
-				const cpfLimpo = text.replace(/\D/g, '');
+				const cpfCnpjLimpo = text.replace(/\D/g, '');
 
-				if (!/^\d{11}$/.test(cpfLimpo)) {
-					await client.sendMessage(userPhone, "⚠️ *CPF inválido!* Digite os 11 números do seu CPF:");
+				// Chamada assíncrona da validação
+				const ehValido = await validarCPFouCNPJ(cpfCnpjLimpo);
+
+				if (!ehValido) {
+					await client.sendMessage(userPhone, "⚠️ *CPF/CNPJ inválido!* Por favor, digite um CPF/CNPJ válido:");
 					return;
 				}
 
@@ -6349,11 +6423,11 @@ client.on('message', async msg => {
 				const chat = await msg.getChat();
 				await chat.sendStateTyping();
 
-				const resultado = await GetBoletosFiltrados(cpfLimpo);
+				const resultado = await GetBoletosFiltrados(cpfCnpjLimpo);
 
 				if (!resultado) {
 					await chat.clearState();
-					await client.sendMessage(userPhone, "❌ Nenhum cadastro encontrado para este CPF.\nPor favor, digite o CPF do titular\n\nEnvie *0* para sair.");
+					await client.sendMessage(userPhone, "❌ Nenhum cadastro encontrado para este CPF/CNPJ.\nPor favor, digite o CPF/CNPJ do titular\n\nEnvie *0* para sair.");
 					return;
 				}
 
