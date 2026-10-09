@@ -942,6 +942,8 @@ else
     "Atualizando libs Python" update
 fi
 
+  run_step "command -v redis-server >/dev/null 2>&1 || $SUDO apt-get install -y redis-server --no-install-recommends" "Atualizando Redis" update
+  run_step "$SUDO systemctl unmask redis-server && $SUDO systemctl enable redis-server && $SUDO systemctl restart redis-server" "Habilitando serviço Redis" update
 
   if command -v pm2 >/dev/null 2>&1; then
     CURRENT_PM2_VERSION=$(pm2 -v | head -n1 | tr -d '[:space:]')
