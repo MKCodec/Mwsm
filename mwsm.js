@@ -750,8 +750,7 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 		} catch (err) {
 			return {
 				version: [{
-					release: '0.0.0',
-					patch: '0000-00-00 00:00:00'
+					release: '0.0.0'
 				}]
 			};
 		}
@@ -766,8 +765,7 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 		} catch (e) {}
 		return {
 			version: [{
-				release: '0.0.0',
-				patch: '0000-00-00 00:00:00'
+				release: '0.0.0'
 			}]
 		};
 	};
@@ -775,103 +773,71 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 	const isUpdate = await fetchRemoteVersion(GET);
 	const nowdate = getLocalVersion();
 
-	const remotePatch = isUpdate?.version?.[0]?.patch || '0000-00-00 00:00:00';
 	const remoteRelease = isUpdate?.version?.[0]?.release || '0.0.0';
-	const localPatch = nowdate?.version?.[0]?.patch || '0000-00-00 00:00:00';
-
-	let isDateTime = Debug('RELEASE').mwsm;
-	if (!isDateTime || isDateTime === "undefined") {
-		isDateTime = "0000-00-00 00:00:00";
-	}
-
 	const appName = Debug('OPTIONS').appname;
 
-	if (remotePatch === localPatch && !SET && !GUPForce) {
+	if (remoteRelease <= Package.version && !SET && !GUPForce) {
 		status = false;
 		if (conclusion) {
 			conclusion = false;
-
-			if (Debug('RELEASE').mwsm !== localPatch) {
-				const register = await Dataset('RELEASE', 'MWSM', localPatch, 'UPDATE');
-				if (register) {
-					global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
-					global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isalready}`);
-					global.io.emit('update', true);
-				}
-			} else {
-				global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
-				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isalready}`);
-			}
+			global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
+			global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isalready}`);
 		}
 		updated = "false";
 		global.io.emit('upgrade', true);
 		await WwjsVersion(false);
 
-	} else if (remoteRelease > Package.version && !GUPForce) {
-		if (!SET) {
-			global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isneeds}`);
-			await WwjsVersion(false);
-		}
-		updated = "false";
-		global.io.emit('upgrade', false);
-
-	} else if (remotePatch > isDateTime || GUPForce) {
+	} else if (remoteRelease > Package.version || GUPForce) {
 		global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isfound}`);
 		global.io.emit('upgrade', false);
 
 		const isUpdateAllowed = Boolean(Debug('RELEASE').isupdate) || Boolean(GUPForce);
 
 		if (SET && isUpdateAllowed) {
-			const register = await Dataset('RELEASE', 'MWSM', remotePatch, 'UPDATE');
+			// 1. ATUALIZAÇÃO DE DB PRIMEIRO
+			const register = await Dataset('RELEASE', 'MWSM', remoteRelease, 'UPDATE');
 
 			if (register) {
+				// 2. DISPAROS DE SOCKET ANTES DE BAIXAR O MWSM.JS
 				global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
 				global.io.emit('upgrade', true);
+				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isupdated}`);
+				global.io.emit('update', true);
 
 				const baseUrl = "https://raw.githubusercontent.com/MKCodec/Mwsm/main";
 				const targetDir = "/var/api/Mwsm";
 
-				const filesToDownload = [
+				// 3. DOWNLOAD DOS ARQUIVOS SECUNDÁRIOS / ESTÁTICOS
+				const staticFiles = [
 					'script.js',
 					'style.css',
 					'index.html',
-					'mwsm.js',
 					'version.json'
 				];
 
-				for (const file of filesToDownload) {
+				for (const file of staticFiles) {
 					try {
 						await wget(`${baseUrl}/${file}`, `${targetDir}/${file}`);
-
-						if (file === 'mwsm.js') {
-							let content = await fsPromises.readFile(`${targetDir}/${file}`, 'utf8');
-							if (!content.includes('createRequire')) {
-								const header = `import { createRequire } from 'module';\nimport { fileURLToPath } from 'url';\nimport path from 'path';\nconst require = createRequire(import.meta.url);\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = path.dirname(__filename);\n\n`;
-								content = header + content;
-								await fsPromises.writeFile(`${targetDir}/${file}`, content, 'utf8');
-							}
-						}
-					} catch (err) {}
+					} catch (err) {
+						console.error(`Erro ao baixar ${file}:`, err.message);
+					}
 				}
 
+				// 4. DOWNLOAD E AJUSTE DO MWSM.JS POR ÚLTIMO (Gatilho do PM2)
 				try {
-					await exec(`mkdir -p ${targetDir}/patches`);
+					await wget(`${baseUrl}/mwsm.js`, `${targetDir}/mwsm.js`);
 
-					const patchFile = 'whatsapp-web.js+1.34.7.patch';
-					await wget(`${baseUrl}/patches/${patchFile}`, `${targetDir}/patches/${patchFile}`);
-				} catch (err) {}
+					let content = await fsPromises.readFile(`${targetDir}/mwsm.js`, 'utf8');
+					if (!content.includes('createRequire')) {
+						const header = `import { createRequire } from 'module';\nimport { fileURLToPath } from 'url';\nimport path from 'path';\nconst require = createRequire(import.meta.url);\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = path.dirname(__filename);\n\n`;
+						content = header + content;
+						await fsPromises.writeFile(`${targetDir}/mwsm.js`, content, 'utf8');
+					}
+				} catch (err) {
+					console.error("Erro ao baixar e ajustar mwsm.js:", err.message);
+				}
 
-				try {
-					const {
-						stdout,
-						stderr
-					} = await exec('npx patch-package');
-				} catch (err) {}
-
-				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isupdated}`);
-
-				global.io.emit('update', true);
-
+				// 5. FALLBACKS DE REINÍCIO (Caso o PM2 watch não esteja ativo)
 				try {
 					await exec('npm run restart:mwsm');
 				} catch (err) {}
