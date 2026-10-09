@@ -794,11 +794,9 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 		const isUpdateAllowed = Boolean(Debug('RELEASE').isupdate) || Boolean(GUPForce);
 
 		if (SET && isUpdateAllowed) {
-			// 1. ATUALIZAÇÃO DE DB PRIMEIRO
 			const register = await Dataset('RELEASE', 'MWSM', remoteRelease, 'UPDATE');
 
 			if (register) {
-				// 2. DISPAROS DE SOCKET ANTES DE BAIXAR O MWSM.JS
 				global.io.emit('Patched', Release(Debug('RELEASE').mwsm));
 				global.io.emit('upgrade', true);
 				global.io.emit('message', `> ${appName} : ${Debug('CONSOLE').isupdated}`);
@@ -807,7 +805,6 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 				const baseUrl = "https://raw.githubusercontent.com/MKCodec/Mwsm/main";
 				const targetDir = "/var/api/Mwsm";
 
-				// 3. DOWNLOAD DOS ARQUIVOS SECUNDÁRIOS / ESTÁTICOS
 				const staticFiles = [
 					'script.js',
 					'style.css',
@@ -823,7 +820,6 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 					}
 				}
 
-				// 4. DOWNLOAD E AJUSTE DO MWSM.JS POR ÚLTIMO (Gatilho do PM2)
 				try {
 					await wget(`${baseUrl}/mwsm.js`, `${targetDir}/mwsm.js`);
 
@@ -837,7 +833,6 @@ const GetUpdate = async (GET, SET, GUPForce = false) => {
 					console.error("Erro ao baixar e ajustar mwsm.js:", err.message);
 				}
 
-				// 5. FALLBACKS DE REINÍCIO (Caso o PM2 watch não esteja ativo)
 				try {
 					await exec('npm run restart:mwsm');
 				} catch (err) {}
