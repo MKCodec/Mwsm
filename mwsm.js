@@ -5863,38 +5863,6 @@ app.post('/send-message', [
 		});
 	}
 
-	var isHid;
-	if (Boolean(Debug('OPTIONS').protect)) {
-		if (req.body.pass !== undefined) {
-			isHid = req.body.pass;
-		} else if (req.body.p !== undefined) {
-			isHid = req.body.p;
-		} else {
-			isHid = '';
-		}
-	} else {
-		if (Debug('OPTIONS').token === "" || Debug('OPTIONS').protect === undefined) {
-			isHid = Password[1];
-		} else {
-			isHid = Debug('OPTIONS').token;
-		}
-	}
-
-	var Contact = typeof DDISet === 'function' ? DDISet(req.body.to) : req.body.to;
-	if (typeof Playground !== 'undefined' && typeof validPhone === 'function' && validPhone(Playground)) {
-		Contact = typeof DDISet === 'function' ? DDISet(Playground) : Playground;
-	}
-
-	const isWid = String(Contact).replace(/[^0-9.]+/g, '');
-	const isValidPhone = typeof validPhone === 'function' ? validPhone(isWid) : isWid.length >= 10;
-
-	if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !isValidPhone) {
-		return sendLoggedResponse(401, {
-			Status: "Fail",
-			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-		});
-	}
-
 	let Json = {
 		"Mwsm": "/send-message",
 		"Main": "MkAuth",
@@ -5904,32 +5872,78 @@ app.post('/send-message', [
 		Json = JSON.stringify(Json);
 	}
 
-	req.body.toFormatted = Contact;
+	if (!Boolean(Debug('MKAUTH').aimbot)) {
 
-	try {
-		const job = await EnqueueWithPriority(req.body, 0, true);
+		var isHid;
+		if (Boolean(Debug('OPTIONS').protect)) {
+			if (req.body.pass !== undefined) {
+				isHid = req.body.pass;
+			} else if (req.body.p !== undefined) {
+				isHid = req.body.p;
+			} else {
+				isHid = '';
+			}
+		} else {
+			if (Debug('OPTIONS').token === "" || Debug('OPTIONS').protect === undefined) {
+				isHid = Password[1];
+			} else {
+				isHid = Debug('OPTIONS').token;
+			}
+		}
 
-		if (!job) {
-			return sendLoggedResponse(200, {
-				Status: "Success",
-				message: `${Debug('OPTIONS').appname} : Mensagem/Cobrança para este título já enviada ou agendada hoje.`,
-				duplicated: true
+		var Contact = typeof DDISet === 'function' ? DDISet(req.body.to) : req.body.to;
+		if (typeof Playground !== 'undefined' && typeof validPhone === 'function' && validPhone(Playground)) {
+			Contact = typeof DDISet === 'function' ? DDISet(Playground) : Playground;
+		}
+
+		const isWid = String(Contact).replace(/[^0-9.]+/g, '');
+		const isValidPhone = typeof validPhone === 'function' ? validPhone(isWid) : isWid.length >= 10;
+
+		if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !isValidPhone) {
+			return sendLoggedResponse(401, {
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
 			});
 		}
 
-		return sendLoggedResponse(200, {
-			Status: "Success",
-			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queue,
-			jobId: job.id
-		});
+		req.body.toFormatted = Contact;
 
-	} catch (err) {
-		if (typeof WwjsVersion === 'function') WwjsVersion(false);
+		try {
+			const job = await EnqueueWithPriority(req.body, 0, true);
+
+			if (!job) {
+				return sendLoggedResponse(200, {
+					Status: "Success",
+					message: `${Debug('OPTIONS').appname} : Mensagem/Cobrança para este título já enviada ou agendada hoje.`,
+					duplicated: true
+				});
+			}
+
+			return sendLoggedResponse(200, {
+				Status: "Success",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queue,
+				jobId: job.id
+			});
+
+		} catch (err) {
+			if (typeof WwjsVersion === 'function') WwjsVersion(false);
+
+			return sendLoggedResponse(500, {
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queuefail,
+				error: err.message
+			});
+		}
+
+	} else {
+		if (global.io) {
+			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		}
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
 
 		return sendLoggedResponse(500, {
 			Status: "Fail",
-			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queuefail,
-			error: err.message
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger
 		});
 	}
 });
