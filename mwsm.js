@@ -154,9 +154,12 @@ const domain = Debug('OPTIONS').domain;
 let server;
 if (isSslEnabled) {
 	try {
-		const privateKey  = fs.readFileSync(`/etc/letsencrypt/live/${domain}/privkey.pem`, 'utf8');
+		const privateKey = fs.readFileSync(`/etc/letsencrypt/live/${domain}/privkey.pem`, 'utf8');
 		const certificate = fs.readFileSync(`/etc/letsencrypt/live/${domain}/fullchain.pem`, 'utf8');
-		const credentials = { key: privateKey, cert: certificate };
+		const credentials = {
+			key: privateKey,
+			cert: certificate
+		};
 		server = https.createServer(credentials, app);
 	} catch (err) {
 		process.exit(1);
@@ -197,6 +200,7 @@ const queueEvents = new QueueEvents('Row', {
 });
 
 
+
 const EnqueueWithPriority = async (payload, delayMs = 0, isPostRoute = false) => {
 	const queueInstance = typeof messageQueue !== 'undefined' ? messageQueue : global.messageQueue;
 
@@ -208,9 +212,19 @@ const EnqueueWithPriority = async (payload, delayMs = 0, isPostRoute = false) =>
 	const hoje = new Date().toISOString().split('T')[0];
 	const codigoTitulo = payload.code || payload.titulo || payload.codeTitle || `${Keygen(7)}`;
 
-	const rawPriority = Number(payload?.priority ?? 4);
-	const effectivePriority = isPostRoute ? 0 : rawPriority;
-	const jobIdPriority = (isPostRoute || rawPriority === 0) ? 4 : rawPriority;
+	const rawPriority = payload?.priority;
+
+	let effectivePriority;
+	let jobIdPriority;
+
+	if (rawPriority === undefined || rawPriority === null) {
+		effectivePriority = 4;
+		jobIdPriority = 0;
+	} else {
+		const parsedPriority = Number(rawPriority);
+		effectivePriority = isPostRoute ? 0 : parsedPriority;
+		jobIdPriority = (parsedPriority === 0) ? 4 : parsedPriority;
+	}
 
 	const uniqueJobId = `msg-${codigoTitulo}-p${jobIdPriority}-${hoje}`;
 
@@ -2777,9 +2791,6 @@ io.on('connection', (socket) => {
 });
 
 
-
-
-
 //WebHook
 app.post('/webhook/mkauth', async (req, res) => {
 	writeLog('WEBHOOK RECEBIDO', {
@@ -2794,16 +2805,14 @@ app.post('/webhook/mkauth', async (req, res) => {
 		const signature = req.headers['x-webhook-signature'];
 		const isPingTest = payload.event === 'ping';
 
-		// 1. IDENTIFICA SE O REMETENTE É A GERENCIANET/EFÍ
-		// A Efí se identifica pelo User-Agent ou pela presença de propriedades de notificação clássicas
-		const isGerencianet = userAgent.includes('gerencianet') || 
-		                      userAgent.includes('efi') || 
-		                      Boolean(payload.notification) || 
-		                      Boolean(payload.notificationToken);
+		const isGerencianet = userAgent.includes('gerencianet') ||
+			userAgent.includes('efi') ||
+			Boolean(payload.notification) ||
+			Boolean(payload.notificationToken);
 
 		if (isGerencianet) {
 			writeLog('WEBHOOK NOTIFICAÇÃO: Detectado callback direto da Gerencianet/Efí. Ignorando assinatura do MK-Auth.');
-			
+
 			// Nota: Se a Gerencianet mandar apenas o token de notificação, 
 			// você precisará fazer um GET na API deles usando este token para coletar os dados do boleto.
 		} else {
@@ -2811,15 +2820,20 @@ app.post('/webhook/mkauth', async (req, res) => {
 			if (!signature) {
 				if (isPingTest) {
 					writeLog('WEBHOOK PING: Teste de ativação do MK-Auth recebido sem assinatura.');
-					return res.status(200).json({ status: 'success', message: 'Ping test bypass' });
+					return res.status(200).json({
+						status: 'success',
+						message: 'Ping test bypass'
+					});
 				}
 				writeLog('WEBHOOK ERRO: Assinatura X-Webhook-Signature ausente.');
-				return res.status(401).json({ error: 'Missing webhook signature' });
+				return res.status(401).json({
+					error: 'Missing webhook signature'
+				});
 			}
 
 			const secretMkauth = Debug('MKAUTH').webhook;
 			const payloadString = req.rawBody || JSON.stringify(payload);
-			
+
 			const computedSignature = crypto
 				.createHmac('sha256', secretMkauth || '')
 				.update(payloadString)
@@ -2828,11 +2842,16 @@ app.post('/webhook/mkauth', async (req, res) => {
 			if (signature !== computedSignature) {
 				if (isPingTest) {
 					writeLog('WEBHOOK PING: Teste de ativação com assinatura divergente aceito como fallback.');
-					return res.status(200).json({ status: 'success', message: 'Ping test verified.' });
+					return res.status(200).json({
+						status: 'success',
+						message: 'Ping test verified.'
+					});
 				}
 
 				writeLog('WEBHOOK ERRO: Assinatura inválida.');
-				return res.status(401).json({ error: 'Invalid webhook signature' });
+				return res.status(401).json({
+					error: 'Invalid webhook signature'
+				});
 			}
 		}
 
@@ -2840,20 +2859,32 @@ app.post('/webhook/mkauth', async (req, res) => {
 		const isWebhookEnabled = Boolean(Debug('MKAUTH').whstatus);
 		if (!isWebhookEnabled) {
 			if (isPingTest) {
-				return res.status(200).json({ status: 'success', message: 'Ping test verified.' });
+				return res.status(200).json({
+					status: 'success',
+					message: 'Ping test verified.'
+				});
 			}
 			writeLog('WEBHOOK IGNORADO: Webhook desativado nas configurações internas.');
-			return res.status(200).json({ status: 'ignored', message: 'Webhook is disabled.' });
+			return res.status(200).json({
+				status: 'ignored',
+				message: 'Webhook is disabled.'
+			});
 		}
 
 		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot) || !Boolean(Debug('SCHEDULER').onpay)) {
 			writeLog('WEBHOOK IGNORADO: Validações do sistema desativadas.');
-			return res.status(200).json({ status: 'ignored', message: 'Validations disabled.' });
+			return res.status(200).json({
+				status: 'ignored',
+				message: 'Validations disabled.'
+			});
 		}
 
 		// Se for apenas um evento de teste de ping funcional, encerra aqui com sucesso
 		if (isPingTest) {
-			return res.status(200).json({ status: 'success', message: 'Ping processed.' });
+			return res.status(200).json({
+				status: 'success',
+				message: 'Ping processed.'
+			});
 		}
 
 		// 4. EXTRAÇÃO DO NÚMERO DO TÍTULO (SUPORTA CAIXA, BOLETO E HISTÓRICO)
@@ -4799,10 +4830,10 @@ app.post('/WebHook', async (req, res) => {
 		ConnAuth = true;
 
 		if (testResponse.data && (
-			testResponse.data.status === 'success' || 
-			testResponse.data.status === 'Success' || 
-			testResponse.data.status === 'ignored'
-		)) {
+				testResponse.data.status === 'success' ||
+				testResponse.data.status === 'Success' ||
+				testResponse.data.status === 'ignored'
+			)) {
 			ResAuth = true;
 		}
 
@@ -5170,12 +5201,13 @@ app.post('/send-document', [
 
 			const WhatsApp = numberDetails._serialized;
 
-			// --- CONSTRUÇÃO E TRATAMENTO DO DOCUMENTO ---
 			let Mensagem;
 			const rawDocument = req.body.document;
 
 			if (typeof rawDocument === 'string' && rawDocument.startsWith('http')) {
-				const response = await axios.get(rawDocument, { responseType: 'arraybuffer' });
+				const response = await axios.get(rawDocument, {
+					responseType: 'arraybuffer'
+				});
 				const mimetype = response.headers['content-type'] || hasMimetype;
 				const attachment = Buffer.from(response.data).toString('base64');
 				Mensagem = ensureMessageMedia(new MessageMedia(mimetype, attachment, hasFileName));
@@ -5186,7 +5218,6 @@ app.post('/send-document', [
 				}
 				Mensagem = ensureMessageMedia(new MessageMedia(hasMimetype, cleanBase64, hasFileName));
 			}
-			// -------------------------------------------
 
 			await client.sendMessage(WhatsApp, Mensagem, {
 				caption: hasCaption,
@@ -5304,12 +5335,13 @@ app.post('/send-image', [
 
 			const WhatsApp = numberDetails._serialized;
 
-			// --- CONSTRUÇÃO E TRATAMENTO DA IMAGEM ---
 			let Mensagem;
 			const rawImage = req.body.image;
 
 			if (typeof rawImage === 'string' && rawImage.startsWith('http')) {
-				const response = await axios.get(rawImage, { responseType: 'arraybuffer' });
+				const response = await axios.get(rawImage, {
+					responseType: 'arraybuffer'
+				});
 				const mimetype = response.headers['content-type'] || hasMimetype;
 				const attachment = Buffer.from(response.data).toString('base64');
 				Mensagem = ensureMessageMedia(new MessageMedia(mimetype, attachment, 'Media'));
@@ -5320,7 +5352,6 @@ app.post('/send-image', [
 				}
 				Mensagem = ensureMessageMedia(new MessageMedia(hasMimetype, cleanBase64, 'Media'));
 			}
-			// ----------------------------------------
 
 			await client.sendMessage(WhatsApp, Mensagem, {
 				caption: hasCaption,
@@ -5383,7 +5414,6 @@ function getNextValidShiftMs() {
 			const isTurnoAllowed = isShift(hour);
 
 			if (inRange && isDayAllowed && isTurnoAllowed) {
-				console.log(`> [SCHEDULER OTIMIZADO] Próxima janela válida encontrada: ${candidate.toLocaleString('pt-BR')} (${currentDay.toUpperCase()})`);
 				return candidate.getTime() - Date.now();
 			}
 		}
@@ -5464,41 +5494,47 @@ const worker = new Worker('Row', async (job) => {
 
 	if (isAimbotEnabled) {
 		const msgPriority = Number(priority) || 4;
-		const dateTimeNow = DateTime(0);
-		const currentHour = Number((dateTimeNow.split(" ")[1]).split(":")[0]);
 
-		const minHour = Number(Debug('SCHEDULER')?.min) || 8;
-		const maxHour = Number(Debug('SCHEDULER')?.max) || 22;
-		const isShiftActive = Boolean(Debug('SCHEDULER')?.shift);
+		// PULA TODOS OS BLOQUEIOS DE HORÁRIO SE A PRIORIDADE FOR 0 (p0)
+		const isPriorityZero = msgPriority === 0 || (job.id && job.id.includes('-p0-'));
 
 		let shouldWait = false;
 		let waitReason = "";
 		let customDelayMs = null;
 
-		const isMadrugada = (currentHour >= 0 && currentHour < 3) && !(validPhone(Playground) && Initialize);
+		if (!isPriorityZero) {
+			const dateTimeNow = DateTime(0);
+			const currentHour = Number((dateTimeNow.split(" ")[1]).split(":")[0]);
 
-		if (isMadrugada) {
-			shouldWait = true;
-			waitReason = `Sistema em atualização / Madrugada (00:00 - 02:59).`;
+			const minHour = Number(Debug('SCHEDULER')?.min) || 8;
+			const maxHour = Number(Debug('SCHEDULER')?.max) || 22;
+			const isShiftActive = Boolean(Debug('SCHEDULER')?.shift);
 
-			if (msgPriority < 4) {
-				const target3AM = new Date();
-				target3AM.setHours(3, 0, 5, 0);
+			const isMadrugada = (currentHour >= 0 && currentHour < 3) && !(validPhone(Playground) && Initialize);
 
-				if (Date.now() >= target3AM.getTime()) {
-					target3AM.setDate(target3AM.getDate() + 1);
-				}
-
-				customDelayMs = target3AM.getTime() - Date.now();
-			}
-		} else if (msgPriority === 4) {
-			const isBusinessHours = isShiftActive ?
-				(currentHour >= minHour && currentHour < maxHour) :
-				(((isWeek(dateTimeNow)) && (isShift(currentHour))) || (validPhone(Playground) && Initialize));
-
-			if (!isBusinessHours) {
+			if (isMadrugada) {
 				shouldWait = true;
-				waitReason = `Cobrança (Prioridade ${msgPriority}) fora do horário permitido (${minHour}h às ${maxHour}h).`;
+				waitReason = `Sistema em atualização / Madrugada (00:00 - 02:59).`;
+
+				if (msgPriority < 4) {
+					const target3AM = new Date();
+					target3AM.setHours(3, 0, 5, 0);
+
+					if (Date.now() >= target3AM.getTime()) {
+						target3AM.setDate(target3AM.getDate() + 1);
+					}
+
+					customDelayMs = target3AM.getTime() - Date.now();
+				}
+			} else if (msgPriority === 4) {
+				const isBusinessHours = isShiftActive ?
+					(currentHour >= minHour && currentHour < maxHour) :
+					(((isWeek(dateTimeNow)) && (isShift(currentHour))) || (validPhone(Playground) && Initialize));
+
+				if (!isBusinessHours) {
+					shouldWait = true;
+					waitReason = `Cobrança (Prioridade ${msgPriority}) fora do horário permitido (${minHour}h às ${maxHour}h).`;
+				}
 			}
 		}
 
@@ -5947,7 +5983,6 @@ app.post('/send-message', [
 		return true;
 	})
 ], async (req, res) => {
-
 	const startTime = Date.now();
 	const clientIp = req.ip || req.connection?.remoteAddress;
 
@@ -5967,16 +6002,26 @@ app.post('/send-message', [
 		});
 	}
 
-	let Json = {
+	let isAuth = Boolean(req.body.simulator ?? false);
+	let isAimbot = Boolean(Debug('MKAUTH').aimbot);
+	let Manager = Boolean(Debug('MKAUTH').aimbot) ? "Mwsm" : "MkAuth";
+	if (isAuth) {
+		Manager = "MkAuth";
+	}
+
+	let Json;
+
+	Json = {
 		"Mwsm": "/send-message",
-		"Main": "MkAuth",
+		"Main": Manager,
 		"Start": DateTime()
 	};
 	if (typeof Json === 'object') {
 		Json = JSON.stringify(Json);
 	}
 
-	if (!Boolean(Debug('MKAUTH').aimbot)) {
+	if (!Boolean(Debug('MKAUTH').aimbot) || Boolean(isAuth)) {
+		console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
 
 		var isHid;
 		if (Boolean(Debug('OPTIONS').protect)) {
@@ -6022,19 +6067,19 @@ app.post('/send-message', [
 					duplicated: true
 				});
 			}
-
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
 			return sendLoggedResponse(200, {
 				Status: "Success",
-				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queue,
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success,
 				jobId: job.id
 			});
 
 		} catch (err) {
 			if (typeof WwjsVersion === 'function') WwjsVersion(false);
-
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
 			return sendLoggedResponse(500, {
 				Status: "Fail",
-				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').queuefail,
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error,
 				error: err.message
 			});
 		}
@@ -6826,17 +6871,17 @@ console.log("\nAPI is Ready!\n");
 
 let Dominio;
 if (isSslEnabled) {
-    try {
-        Dominio = Debug('OPTIONS').domain;
-    } catch (err) {
-        process.exit(1);
-    }
+	try {
+		Dominio = Debug('OPTIONS').domain;
+	} catch (err) {
+		process.exit(1);
+	}
 } else {
-    Dominio = ip.address();
+	Dominio = ip.address();
 }
 server.listen(Port, () => {
-    const protocol = isSslEnabled ? 'https' : 'http';
-    console.log(`Server Running on *${protocol}://${Dominio}:${Port}`);
+	const protocol = isSslEnabled ? 'https' : 'http';
+	console.log(`Server Running on *${protocol}://${Dominio}:${Port}`);
 });
 
 // ----------------------------------------------------
