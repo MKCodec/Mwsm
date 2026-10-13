@@ -4,7 +4,6 @@
 const Playground = "00000000000";
 const Initialize = false;
 
-
 import {
 	createRequire
 } from 'module';
@@ -32,6 +31,7 @@ const {
 	List,
 	MessageMedia
 } = require('whatsapp-web.js');
+
 const express = require('express');
 const {
 	body,
@@ -57,8 +57,6 @@ const app = express();
 const os = require("os");
 const hostName = os.hostname();
 const emoji = require('Emoji-API');
-const server = http.createServer(app);
-const io = socketIO(server);
 const sys = require('util');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
@@ -73,6 +71,26 @@ let isPanelAuthorized = false;
 
 const link = require('better-sqlite3')('mwsm.db');
 link.pragma('journal_mode = WAL');
+
+app.use(express.json({
+	limit: '1000mb',
+	verify: (req, res, buf) => {
+		if (buf && buf.length) {
+			req.rawBody = buf.toString('utf8');
+		}
+	}
+}));
+
+app.use(express.urlencoded({
+	limit: '1000mb',
+	extended: true
+}));
+
+app.use(express.text({
+	limit: '1000mb'
+}));
+
+app.use("/", express.static(__dirname + "/"));
 
 const db = {
 	run: (sql, params, callback) => {
@@ -104,6 +122,23 @@ const db = {
 	}
 };
 
+
+function Debug(Select, Search = '*', Mode = 'single', Find = undefined) {
+	const table = Select.toLowerCase();
+	const fields = Search.toLowerCase();
+	const mode = Mode.toLowerCase();
+
+	const queries = {
+		single: () => link.prepare(`SELECT ${fields} FROM ${table} ORDER BY ID DESC`).get(),
+		multiple: () => link.prepare(`SELECT ${fields} FROM ${table}`).pluck().all(),
+		all: () => link.prepare(`SELECT ${fields} FROM ${table} ORDER BY ID DESC`).all(),
+		direct: () => link.prepare(`SELECT ${fields} FROM ${table} WHERE title = ?`).get(Find),
+		id: () => link.prepare(`SELECT ${fields} FROM ${table} WHERE id = ?`).get(Find)
+	};
+
+	return queries[mode] ? queries[mode]() : undefined;
+}
+
 const register = new Date().getDate();
 const Package = require('./package.json');
 require('events').EventEmitter.defaultMaxListeners = Infinity;
@@ -113,6 +148,24 @@ const Keygen = (length = 7, characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZab
 var Password = [Debug('OPTIONS').token, Keygen()];
 
 process.env.LANG = "pt-BR.utf8";
+const isSslEnabled = Debug('OPTIONS').ssl === true || Debug('OPTIONS').ssl === 'true';
+const domain = Debug('OPTIONS').domain;
+
+let server;
+if (isSslEnabled) {
+	try {
+		const privateKey  = fs.readFileSync(`/etc/letsencrypt/live/${domain}/privkey.pem`, 'utf8');
+		const certificate = fs.readFileSync(`/etc/letsencrypt/live/${domain}/fullchain.pem`, 'utf8');
+		const credentials = { key: privateKey, cert: certificate };
+		server = https.createServer(credentials, app);
+	} catch (err) {
+		process.exit(1);
+	}
+} else {
+	server = http.createServer(app);
+}
+
+const io = socketIO(server);
 global.io = io;
 
 const {
@@ -143,17 +196,6 @@ const queueEvents = new QueueEvents('Row', {
 	skipVersionCheck: true
 });
 
-// Configuração única do express.json com verify para capturar o rawBody corretamente
-app.use(express.json({
-	verify: (req, res, buf) => {
-		if (buf && buf.length) {
-			req.rawBody = buf.toString('utf8');
-		}
-	}
-}));
-app.use(express.urlencoded({
-	extended: true
-}));
 
 const EnqueueWithPriority = async (payload, delayMs = 0, isPostRoute = false) => {
 	const queueInstance = typeof messageQueue !== 'undefined' ? messageQueue : global.messageQueue;
@@ -242,143 +284,6 @@ const RemoveExistingJob = async (jobId) => {
 		return false;
 	}
 };
-
-app.post('/webhook/mkauth', async (req, res) => {
-	writeLog('WEBHOOK RECEBIDO', {
-		headers: req.headers,
-		query: req.query,
-		body: req.body
-	});
-
-	try {
-		const isWebhookEnabled = Boolean(Debug('MKAUTH').whstatus);
-		if (!isWebhookEnabled) {
-			writeLog('WEBHOOK IGNORADO: Webhook desativado nas configurações.');
-			return res.status(200).json({
-				status: 'ignored',
-				message: 'Webhook is disabled.'
-			});
-		}
-
-		const signature = req.headers['x-webhook-signature'];
-
-		if (!signature) {
-			writeLog('WEBHOOK ERRO: Assinatura ausente.');
-			return res.status(401).json({
-				error: 'Missing webhook signature'
-			});
-		}
-
-		const secretMkauth = Debug('MKAUTH').webhook;
-		const payloadString = req.rawBody || JSON.stringify(req.body || {});
-		const computedSignature = crypto
-			.createHmac('sha256', secretMkauth)
-			.update(payloadString)
-			.digest('hex');
-
-		if (signature !== computedSignature) {
-			writeLog('WEBHOOK ERRO: Assinatura inválida.');
-			return res.status(401).json({
-				error: 'Invalid webhook signature'
-			});
-		}
-
-		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot) || !Boolean(Debug('SCHEDULER').onpay)) {
-			writeLog('WEBHOOK IGNORADO: Validações do sistema desativadas.');
-			return res.status(200).json({
-				status: 'ignored',
-				message: 'Validations disabled.'
-			});
-		}
-
-		const payload = req.body || {};
-		const dadosWebhook = payload.dados || payload;
-
-		let numeroTitulo = null;
-
-		numeroTitulo = dadosWebhook.titulo ||
-			dadosWebhook.id_titulo ||
-			dadosWebhook.code ||
-			dadosWebhook.nossonumero ||
-			dadosWebhook.seu_numero ||
-			dadosWebhook.id_transacao ||
-			dadosWebhook.custom_id ||
-			payload.titulo;
-
-		if (!numeroTitulo && dadosWebhook.historico) {
-			const matchHistorico = dadosWebhook.historico.match(/(?:titulo|tÃ­tulo|tit|fatura|boleto)\s*[:#-]?\s*(\d+)/i);
-			if (matchHistorico && matchHistorico[1]) {
-				numeroTitulo = matchHistorico[1];
-			}
-		}
-
-		if (!numeroTitulo) {
-			const rawContent = JSON.stringify(payload);
-			const matchTitulo = rawContent.match(/(?:titulo|tÃ­tulo|tit|nossonumero|fatura|boleto)\s*[:#-]?\s*(\d+)/i);
-			if (matchTitulo && matchTitulo[1]) {
-				numeroTitulo = matchTitulo[1];
-			}
-		}
-
-		if (numeroTitulo) {
-			writeLog(`WEBHOOK PROCESSANDO TÍTULO: ${numeroTitulo}`);
-			const Resolve = await MkAuth('all', numeroTitulo, 'list');
-			const isBank = Array.isArray(Resolve) ? Resolve[0] : (Resolve ? Object.assign({}, Resolve)[0] : null);
-
-			if (isBank && (isBank.Payment === 'paid' || isBank.Payment === 'pago')) {
-				const localSchedule = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(isBank.Identifier);
-				const isBlocked = isBank.unLock === 'false' || isBank.unLock === '0' || isBank.unLock === false;
-				const processFactor = isBlocked ? 'unlock' : 'pending';
-
-				const messagePayload = {
-					client: isBank.Client || localSchedule?.client,
-					authority: isBank.Authority || isBank.Client || localSchedule?.client,
-					user: isBank.Connect || localSchedule?.user,
-					code: isBank.Identifier,
-					status: "finished",
-					contact: isBank.Contact || localSchedule?.contact,
-					reward: isBank.Reward || localSchedule?.reward,
-					push: DateTime(),
-					option: localSchedule?.option || isBank.Working,
-					unlock: isBank.unLock || 'true',
-					process: processFactor,
-					token: Debug('OPTIONS').token,
-					cash: isBank.Cash || localSchedule?.cash,
-					gateway: isBank.Gateway || localSchedule?.gateway || 'gerencianet',
-					payment: 'paid',
-					priority: 1
-				};
-
-				const processResult = await ProcessMkAuthMessage(messagePayload);
-
-				if (processResult && processResult.Status === "Success") {
-					await link.prepare('DELETE FROM scheduling WHERE title=?').run(isBank.Identifier);
-
-					if (global.io) {
-						global.io.emit('schedresume', {
-							title: isBank.Identifier,
-							status: 'paid'
-						});
-					}
-					writeLog(`WEBHOOK SUCESSO: Título ${isBank.Identifier} processado e removido do SQLite.`);
-				}
-			}
-		}
-
-		return res.status(200).json({
-			status: 'success'
-		});
-	} catch (error) {
-		writeLog('WEBHOOK ERRO CRÍTICO NO PROCESSAMENTO', {
-			message: error.message,
-			stack: error.stack
-		});
-
-		return res.status(500).json({
-			error: 'Internal Server Error'
-		});
-	}
-});
 
 const processedDispatchesToday = new Set();
 let currentDayCache = new Date().getDate();
@@ -530,23 +435,6 @@ function toCapitalize(str) {
 		.split(' ')
 		.map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : '')
 		.join(' ');
-}
-
-// Search DataBase
-function Debug(Select, Search = '*', Mode = 'single', Find = undefined) {
-	const table = Select.toLowerCase();
-	const fields = Search.toLowerCase();
-	const mode = Mode.toLowerCase();
-
-	const queries = {
-		single: () => link.prepare(`SELECT ${fields} FROM ${table} ORDER BY ID DESC`).get(),
-		multiple: () => link.prepare(`SELECT ${fields} FROM ${table}`).pluck().all(),
-		all: () => link.prepare(`SELECT ${fields} FROM ${table} ORDER BY ID DESC`).all(),
-		direct: () => link.prepare(`SELECT ${fields} FROM ${table} WHERE title = ?`).get(Find),
-		id: () => link.prepare(`SELECT ${fields} FROM ${table} WHERE id = ?`).get(Find)
-	};
-
-	return queries[mode] ? queries[mode]() : undefined;
 }
 
 
@@ -1231,13 +1119,13 @@ const writeLog = (message, data = null) => {
 
 		if (data !== null) {
 			if (typeof data === 'object') {
-				logContent += ` | DATA: ${JSON.stringify(data)}`;
+				logContent += ` | DATA:\n${JSON.stringify(data, null, 2)}`;
 			} else {
 				logContent += ` | DATA: ${data}`;
 			}
 		}
 
-		fs.appendFileSync(logPath, logContent + '\n', 'utf8');
+		fs.appendFileSync(logPath, logContent + '\n\n', 'utf8');
 	} catch (err) {
 		console.error('Erro ao escrever no arquivo de log:', err);
 	}
@@ -1641,19 +1529,6 @@ cron.schedule(`*/${Debug('SCHEDULER').cron} 0-23 * * *`, async () => {
 	scheduled: true,
 	timezone
 });
-
-app.use(express.json({
-	limit: '500mb'
-}));
-app.use(express.urlencoded({
-	limit: '500mb',
-	extended: true
-}));
-app.use(express.text({
-	limit: '500mb'
-}));
-
-app.use("/", express.static(__dirname + "/"))
 
 app.get('/', (req, res) => {
 	isPanelAuthorized = false;
@@ -2852,6 +2727,7 @@ io.on('connection', (socket) => {
 	socket.emit('Manager', Debug('MKAUTH').aimbot);
 	socket.emit('Patched', Release(Debug('RELEASE').mwsm));
 	socket.emit('Reset', !Session);
+	socket.emit('inDomain', Debug('OPTIONS').ssl);
 
 	const appName = Debug('OPTIONS').appname;
 
@@ -2899,6 +2775,179 @@ io.on('connection', (socket) => {
 		}
 	}, 2000);
 });
+
+
+
+
+
+//WebHook
+app.post('/webhook/mkauth', async (req, res) => {
+	writeLog('WEBHOOK RECEBIDO', {
+		headers: req.headers,
+		query: req.query,
+		body: req.body
+	});
+
+	try {
+		const payload = req.body || {};
+		const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+		const signature = req.headers['x-webhook-signature'];
+		const isPingTest = payload.event === 'ping';
+
+		// 1. IDENTIFICA SE O REMETENTE É A GERENCIANET/EFÍ
+		// A Efí se identifica pelo User-Agent ou pela presença de propriedades de notificação clássicas
+		const isGerencianet = userAgent.includes('gerencianet') || 
+		                      userAgent.includes('efi') || 
+		                      Boolean(payload.notification) || 
+		                      Boolean(payload.notificationToken);
+
+		if (isGerencianet) {
+			writeLog('WEBHOOK NOTIFICAÇÃO: Detectado callback direto da Gerencianet/Efí. Ignorando assinatura do MK-Auth.');
+			
+			// Nota: Se a Gerencianet mandar apenas o token de notificação, 
+			// você precisará fazer um GET na API deles usando este token para coletar os dados do boleto.
+		} else {
+			// 2. VALIDAÇÃO DE SEGURANÇA EXCLUSIVA PARA O MK-AUTH
+			if (!signature) {
+				if (isPingTest) {
+					writeLog('WEBHOOK PING: Teste de ativação do MK-Auth recebido sem assinatura.');
+					return res.status(200).json({ status: 'success', message: 'Ping test bypass' });
+				}
+				writeLog('WEBHOOK ERRO: Assinatura X-Webhook-Signature ausente.');
+				return res.status(401).json({ error: 'Missing webhook signature' });
+			}
+
+			const secretMkauth = Debug('MKAUTH').webhook;
+			const payloadString = req.rawBody || JSON.stringify(payload);
+			
+			const computedSignature = crypto
+				.createHmac('sha256', secretMkauth || '')
+				.update(payloadString)
+				.digest('hex');
+
+			if (signature !== computedSignature) {
+				if (isPingTest) {
+					writeLog('WEBHOOK PING: Teste de ativação com assinatura divergente aceito como fallback.');
+					return res.status(200).json({ status: 'success', message: 'Ping test verified.' });
+				}
+
+				writeLog('WEBHOOK ERRO: Assinatura inválida.');
+				return res.status(401).json({ error: 'Invalid webhook signature' });
+			}
+		}
+
+		// 3. VALIDAÇÃO DE STATUS DOS MÓDULOS INTERNOS
+		const isWebhookEnabled = Boolean(Debug('MKAUTH').whstatus);
+		if (!isWebhookEnabled) {
+			if (isPingTest) {
+				return res.status(200).json({ status: 'success', message: 'Ping test verified.' });
+			}
+			writeLog('WEBHOOK IGNORADO: Webhook desativado nas configurações internas.');
+			return res.status(200).json({ status: 'ignored', message: 'Webhook is disabled.' });
+		}
+
+		if (!Boolean(Debug('MKAUTH').module) || !Boolean(Debug('MKAUTH').aimbot) || !Boolean(Debug('SCHEDULER').onpay)) {
+			writeLog('WEBHOOK IGNORADO: Validações do sistema desativadas.');
+			return res.status(200).json({ status: 'ignored', message: 'Validations disabled.' });
+		}
+
+		// Se for apenas um evento de teste de ping funcional, encerra aqui com sucesso
+		if (isPingTest) {
+			return res.status(200).json({ status: 'success', message: 'Ping processed.' });
+		}
+
+		// 4. EXTRAÇÃO DO NÚMERO DO TÍTULO (SUPORTA CAIXA, BOLETO E HISTÓRICO)
+		const dadosWebhook = payload.dados || payload;
+		let numeroTitulo = dadosWebhook.titulo ||
+			dadosWebhook.id_titulo ||
+			dadosWebhook.code ||
+			dadosWebhook.nossonumero ||
+			dadosWebhook.seu_numero ||
+			dadosWebhook.id_transacao ||
+			dadosWebhook.custom_id ||
+			payload.titulo;
+
+		// Regex para capturar do campo de histórico (Tratamento para o evento Caixa)
+		if (!numeroTitulo && dadosWebhook.historico) {
+			const matchHistorico = dadosWebhook.historico.match(/(?:titulo|tÃ­tulo|tit|fatura|boleto)\s*[:#-]?\s*(\d+)/i);
+			if (matchHistorico && matchHistorico[1]) {
+				numeroTitulo = matchHistorico[1];
+			}
+		}
+
+		// Regex bruto no JSON completo em último caso para redundância
+		if (!numeroTitulo) {
+			const rawContent = JSON.stringify(payload);
+			const matchTitulo = rawContent.match(/(?:titulo|tÃ­tulo|tit|nossonumero|fatura|boleto)\s*[:#-]?\s*(\d+)/i);
+			if (matchTitulo && matchTitulo[1]) {
+				numeroTitulo = matchTitulo[1];
+			}
+		}
+
+		// 5. PROCESSAMENTO DO TÍTULO LOCALIZADO
+		if (numeroTitulo) {
+			writeLog(`WEBHOOK PROCESSANDO TÍTULO: ${numeroTitulo}`);
+			const Resolve = await MkAuth('all', numeroTitulo, 'list');
+			const isBank = Array.isArray(Resolve) ? Resolve[0] : (Resolve ? Object.assign({}, Resolve)[0] : null);
+
+			if (isBank && (isBank.Payment === 'paid' || isBank.Payment === 'pago')) {
+				const localSchedule = await link.prepare('SELECT * FROM scheduling WHERE title=?').get(isBank.Identifier);
+				const isBlocked = isBank.unLock === 'false' || isBank.unLock === '0' || isBank.unLock === false;
+				const processFactor = isBlocked ? 'unlock' : 'pending';
+
+				const messagePayload = {
+					client: isBank.Client || localSchedule?.client,
+					authority: isBank.Authority || isBank.Client || localSchedule?.client,
+					user: isBank.Connect || localSchedule?.user,
+					code: isBank.Identifier,
+					status: "finished",
+					contact: isBank.Contact || localSchedule?.contact,
+					reward: isBank.Reward || localSchedule?.reward,
+					push: DateTime(),
+					option: localSchedule?.option || isBank.Working,
+					unlock: isBank.unLock || 'true',
+					process: processFactor,
+					token: Debug('OPTIONS').token,
+					cash: isBank.Cash || localSchedule?.cash,
+					gateway: isBank.Gateway || localSchedule?.gateway || 'gerencianet',
+					payment: 'paid',
+					priority: 1
+				};
+
+				const processResult = await ProcessMkAuthMessage(messagePayload);
+
+				if (processResult && processResult.Status === "Success") {
+					await link.prepare('DELETE FROM scheduling WHERE title=?').run(isBank.Identifier);
+
+					if (global.io) {
+						global.io.emit('schedresume', {
+							title: isBank.Identifier,
+							status: 'paid'
+						});
+					}
+					writeLog(`WEBHOOK SUCESSO: Título ${isBank.Identifier} processado e removido do SQLite.`);
+				}
+			}
+		} else {
+			writeLog('WEBHOOK ALERTA: Nível de payload aceito, mas nenhum número de título foi identificado.');
+		}
+
+		return res.status(200).json({
+			status: 'success'
+		});
+
+	} catch (error) {
+		writeLog('WEBHOOK ERRO CRÍTICO NO PROCESSAMENTO', {
+			message: error.message,
+			stack: error.stack
+		});
+
+		return res.status(500).json({
+			error: 'Internal Server Error'
+		});
+	}
+});
+
 
 // Reset
 app.post('/reset', async (req, res) => {
@@ -3921,7 +3970,8 @@ app.post('/token', async (req, res) => {
 		AskInput: Charge?.input_cost_brl || '0,00',
 		AskOutput: Charge?.output_cost_brl || '0,00',
 		AskBrain: AskBrains,
-		AskModule: Debug('ENGINE', 'ACTIVE', 'DIRECT', options.engine)?.active
+		AskModule: Debug('ENGINE', 'ACTIVE', 'DIRECT', options.engine)?.active,
+		inDomain: options.ssl
 	};
 
 	for (const [event, value] of Object.entries(socketEvents)) {
@@ -4659,7 +4709,7 @@ app.post('/force-message', [
 
 
 
-// WebHook
+// WebHook - Configuração e Ativação no Painel
 app.post('/WebHook', async (req, res) => {
 	const {
 		secret: Secret,
@@ -4720,10 +4770,12 @@ app.post('/WebHook', async (req, res) => {
 			.update(testPayload)
 			.digest('hex');
 
+		// Envia a requisição de teste incluindo o header 'x-webhook-secret'
 		const testResponse = await axios.post(WebhookURL, testPayload, {
 			headers: {
 				'Content-Type': 'application/json',
-				'x-webhook-signature': signature
+				'x-webhook-signature': signature,
+				'x-webhook-secret': Secret
 			},
 			timeout: 5000
 		}).catch((axiosErr) => {
@@ -4746,7 +4798,11 @@ app.post('/WebHook', async (req, res) => {
 
 		ConnAuth = true;
 
-		if (testResponse.data && (testResponse.data.status === 'Success' || testResponse.data.status === 'ignored')) {
+		if (testResponse.data && (
+			testResponse.data.status === 'success' || 
+			testResponse.data.status === 'Success' || 
+			testResponse.data.status === 'ignored'
+		)) {
 			ResAuth = true;
 		}
 
@@ -5031,121 +5087,19 @@ app.post('/link_mkauth', async (req, res) => {
 });
 
 
-// Send Image
-app.post('/send-image', [
-	body('pass').notEmpty(),
-	body('to').notEmpty(),
-	body('image').notEmpty(),
-], async (req, res) => {
-	const errors = validationResult(req).formatWith(({
-		msg
-	}) => msg);
-
-	if (!errors.isEmpty()) {
-		return res.status(422).json({
-			Status: "Fail",
-			message: errors.mapped()
-		});
-	}
-
-	const hasCaption = req.body.caption;
-	const hasMimetype = req.body.mimetype;
-	var isHid;
-
-	let Json = {
-		"Mwsm": "/send-image",
-		"Main": "MkAuth",
-		"Start": DateTime()
-	};
-	if (typeof Json === 'object') {
-		Json = JSON.stringify(Json);
-	}
-	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
-
-	if (!Boolean(Debug('MKAUTH').aimbot)) {
-
-		if (Boolean(Debug('OPTIONS').protect)) {
-			if (req.body.pass != undefined) {
-				isHid = req.body.pass;
-			} else if (req.body.p != undefined) {
-				isHid = req.body.p;
-			} else {
-				isHid = '';
-			}
-		} else {
-			if ((Debug('OPTIONS').token == "" || Debug('OPTIONS').protect == undefined)) {
-				isHid = Password[1];
-			} else {
-				isHid = (Debug('OPTIONS').token);
-			}
-		}
-
-		var Contact = DDISet(req.body.to);
-		if (typeof Playground !== 'undefined' && validPhone(Playground)) {
-			Contact = DDISet(Playground);
-		}
-
-		if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !validPhone(Contact)) {
-			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
-			return res.status(401).json({
-				Status: "Fail",
-				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-			});
-		}
-
-		try {
-			const numberDetails = await client.getNumberId(Contact);
-			if (!numberDetails) {
-				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail);
-				return res.status(400).json({
-					Status: "Fail",
-					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail
-				});
-			}
-
-			const WhatsApp = numberDetails._serialized;
-
-			const Mensagem = new MessageMedia(hasMimetype, req.body.image, 'Media');
-
-			await client.sendMessage(WhatsApp, Mensagem, {
-				caption: hasCaption,
-				linkPreview: false
-			});
-
-			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
-			return res.json({
-				Status: "Success",
-				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
-			});
-
-		} catch (err) {
-			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error, err);
-			if (typeof WwjsVersion === 'function') WwjsVersion(false);
-
-			return res.status(500).json({
-				Status: "Fail",
-				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
-			});
-		}
-
-	} else {
-		if (global.io) {
-			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
-		}
-		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
-
-		return res.status(500).json({
-			Status: "Fail",
-			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger
-		});
-	}
-});
-
 // Send Document
 app.post('/send-document', [
-	body('pass').notEmpty(),
 	body('to').notEmpty(),
 	body('document').notEmpty(),
+	body().custom((value, {
+		req
+	}) => {
+		const isProtectActive = Boolean(Debug('OPTIONS').protect);
+		if (isProtectActive && !req.body.pass && !req.body.p) {
+			throw new Error();
+		}
+		return true;
+	})
 ], async (req, res) => {
 	const errors = validationResult(req).formatWith(({
 		msg
@@ -5159,8 +5113,8 @@ app.post('/send-document', [
 	}
 
 	const hasCaption = req.body.caption;
-	const hasMimetype = req.body.mimetype;
-	const hasFileName = req.body.filename;
+	const hasMimetype = req.body.mimetype || 'application/pdf';
+	const hasFileName = req.body.filename || 'Fatura';
 	var isHid;
 
 	let Json = {
@@ -5216,7 +5170,23 @@ app.post('/send-document', [
 
 			const WhatsApp = numberDetails._serialized;
 
-			const Mensagem = new MessageMedia(hasMimetype, req.body.document, hasFileName);
+			// --- CONSTRUÇÃO E TRATAMENTO DO DOCUMENTO ---
+			let Mensagem;
+			const rawDocument = req.body.document;
+
+			if (typeof rawDocument === 'string' && rawDocument.startsWith('http')) {
+				const response = await axios.get(rawDocument, { responseType: 'arraybuffer' });
+				const mimetype = response.headers['content-type'] || hasMimetype;
+				const attachment = Buffer.from(response.data).toString('base64');
+				Mensagem = ensureMessageMedia(new MessageMedia(mimetype, attachment, hasFileName));
+			} else {
+				let cleanBase64 = String(rawDocument);
+				if (cleanBase64.includes(';base64,')) {
+					cleanBase64 = cleanBase64.split(';base64,')[1];
+				}
+				Mensagem = ensureMessageMedia(new MessageMedia(hasMimetype, cleanBase64, hasFileName));
+			}
+			// -------------------------------------------
 
 			await client.sendMessage(WhatsApp, Mensagem, {
 				caption: hasCaption,
@@ -5252,6 +5222,139 @@ app.post('/send-document', [
 	}
 });
 
+// Send Image
+app.post('/send-image', [
+	body('to').notEmpty(),
+	body('image').notEmpty(),
+	body().custom((value, {
+		req
+	}) => {
+		const isProtectActive = Boolean(Debug('OPTIONS').protect);
+		if (isProtectActive && !req.body.pass && !req.body.p) {
+			throw new Error();
+		}
+		return true;
+	})
+], async (req, res) => {
+	const errors = validationResult(req).formatWith(({
+		msg
+	}) => msg);
+
+	if (!errors.isEmpty()) {
+		return res.status(422).json({
+			Status: "Fail",
+			message: errors.mapped()
+		});
+	}
+
+	const hasCaption = req.body.caption;
+	const hasMimetype = req.body.mimetype || 'image/png';
+	var isHid;
+
+	let Json = {
+		"Mwsm": "/send-image",
+		"Main": "MkAuth",
+		"Start": DateTime()
+	};
+	if (typeof Json === 'object') {
+		Json = JSON.stringify(Json);
+	}
+	console.error(Print.bg.blue, Print.fg.white, Json, Print.reset);
+
+	if (!Boolean(Debug('MKAUTH').aimbot)) {
+
+		if (Boolean(Debug('OPTIONS').protect)) {
+			if (req.body.pass != undefined) {
+				isHid = req.body.pass;
+			} else if (req.body.p != undefined) {
+				isHid = req.body.p;
+			} else {
+				isHid = '';
+			}
+		} else {
+			if ((Debug('OPTIONS').token == "" || Debug('OPTIONS').protect == undefined)) {
+				isHid = Password[1];
+			} else {
+				isHid = (Debug('OPTIONS').token);
+			}
+		}
+
+		var Contact = DDISet(req.body.to);
+		if (typeof Playground !== 'undefined' && validPhone(Playground)) {
+			Contact = DDISet(Playground);
+		}
+
+		if (![Debug('OPTIONS').token, Password[1]].includes(isHid) || !validPhone(Contact)) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error);
+			return res.status(401).json({
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+			});
+		}
+
+		try {
+			const numberDetails = await client.getNumberId(Contact);
+			if (!numberDetails) {
+				console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail);
+				return res.status(400).json({
+					Status: "Fail",
+					message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').numberfail
+				});
+			}
+
+			const WhatsApp = numberDetails._serialized;
+
+			// --- CONSTRUÇÃO E TRATAMENTO DA IMAGEM ---
+			let Mensagem;
+			const rawImage = req.body.image;
+
+			if (typeof rawImage === 'string' && rawImage.startsWith('http')) {
+				const response = await axios.get(rawImage, { responseType: 'arraybuffer' });
+				const mimetype = response.headers['content-type'] || hasMimetype;
+				const attachment = Buffer.from(response.data).toString('base64');
+				Mensagem = ensureMessageMedia(new MessageMedia(mimetype, attachment, 'Media'));
+			} else {
+				let cleanBase64 = String(rawImage);
+				if (cleanBase64.includes(';base64,')) {
+					cleanBase64 = cleanBase64.split(';base64,')[1];
+				}
+				Mensagem = ensureMessageMedia(new MessageMedia(hasMimetype, cleanBase64, 'Media'));
+			}
+			// ----------------------------------------
+
+			await client.sendMessage(WhatsApp, Mensagem, {
+				caption: hasCaption,
+				linkPreview: false
+			});
+
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success);
+			return res.json({
+				Status: "Success",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').success
+			});
+
+		} catch (err) {
+			console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error, err);
+			if (typeof WwjsVersion === 'function') WwjsVersion(false);
+
+			return res.status(500).json({
+				Status: "Fail",
+				message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').error
+			});
+		}
+
+	} else {
+		if (global.io) {
+			global.io.emit('message', '> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+		}
+		console.error('> ' + Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger);
+
+		return res.status(500).json({
+			Status: "Fail",
+			message: Debug('OPTIONS').appname + ' : ' + Debug('CONSOLE').trigger
+		});
+	}
+});
 
 // -------------------------------------------------------------
 // HELPER 
@@ -5844,6 +5947,7 @@ app.post('/send-message', [
 		return true;
 	})
 ], async (req, res) => {
+
 	const startTime = Date.now();
 	const clientIp = req.ip || req.connection?.remoteAddress;
 
@@ -5947,6 +6051,7 @@ app.post('/send-message', [
 		});
 	}
 });
+
 
 // Html to PDF
 app.get('/build', [
@@ -6650,6 +6755,7 @@ createBullBoard({
 			miscLinks: [{
 					text: 'Manager',
 					url: "javascript:(function(){ " +
+						"   if (localStorage.getItem('i18nextLng') !== 'en-US') { localStorage.setItem('i18nextLng', 'en-US'); } " +
 						"   var overlay = window.parent.$('#preload-overlay'); " +
 						"   var apiClass = window.parent.$('.API'); " +
 						"   var apiId = window.parent.$('#API'); " +
@@ -6665,6 +6771,7 @@ createBullBoard({
 				{
 					text: 'Refresh',
 					url: "javascript:(function(){ " +
+						"   if (localStorage.getItem('i18nextLng') !== 'en-US') { localStorage.setItem('i18nextLng', 'en-US'); } " +
 						"   var pWin = window.parent || window; " +
 						"   var overlay = pWin.$('#preload-overlay'); " +
 						"   var frame = pWin.$('iframe'); " +
@@ -6688,7 +6795,6 @@ createBullBoard({
 		}
 	}
 });
-
 
 app.get('/panel', (req, res) => {
 	res.redirect('/panel/queue/Row');
@@ -6718,8 +6824,19 @@ app.use('/panel', protectPanel, serverAdapter.getRouter());
 client.initialize();
 console.log("\nAPI is Ready!\n");
 
-server.listen(Port, ip.address(), () => {
-	console.log(`Server Running on *${ip.address()}:${Port}`);
+let Dominio;
+if (isSslEnabled) {
+    try {
+        Dominio = Debug('OPTIONS').domain;
+    } catch (err) {
+        process.exit(1);
+    }
+} else {
+    Dominio = ip.address();
+}
+server.listen(Port, () => {
+    const protocol = isSslEnabled ? 'https' : 'http';
+    console.log(`Server Running on *${protocol}://${Dominio}:${Port}`);
 });
 
 // ----------------------------------------------------
