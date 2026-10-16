@@ -5032,16 +5032,14 @@ app.post('/link_mkauth', async (req, res) => {
 	let ResAuth = false;
 
 	try {
-		const authResponse = await axios.get(`https://${iServer}/api/`, {
+		const syncResponse = await axios.get(`https://${iServer}/api/titulo/listar/limite=1&pagina=1`, {
 			auth: {
 				username: User,
 				password: Pass
 			}
 		}).catch(() => null);
 
-		const Authentication = authResponse?.data;
-
-		if (!Authentication) {
+		if (!syncResponse) {
 			Terminal({
 				MkAuth: [{
 					Authentication: "false",
@@ -5054,15 +5052,7 @@ app.post('/link_mkauth', async (req, res) => {
 			});
 		}
 
-		ConnAuth = true;
-
-		const syncResponse = await axios.get(`https://${iServer}/api/titulo/listar/limite=1&pagina=1`, {
-			headers: {
-				'Authorization': `Bearer ${Authentication}`
-			}
-		}).catch(() => null);
-
-		const MkSync = syncResponse?.data;
+		const MkSync = syncResponse.data;
 
 		if (!MkSync || MkSync.error !== undefined) {
 			Terminal({
@@ -5077,6 +5067,7 @@ app.post('/link_mkauth', async (req, res) => {
 			});
 		}
 
+		ConnAuth = true;
 		ResAuth = true;
 
 		db.run(
@@ -5116,7 +5107,6 @@ app.post('/link_mkauth', async (req, res) => {
 		});
 	}
 });
-
 
 // Send Document
 app.post('/send-document', [
@@ -5494,8 +5484,6 @@ const worker = new Worker('Row', async (job) => {
 
 	if (isAimbotEnabled) {
 		const msgPriority = Number(priority) || 4;
-
-		// PULA TODOS OS BLOQUEIOS DE HORÁRIO SE A PRIORIDADE FOR 0 (p0)
 		const isPriorityZero = msgPriority === 0 || (job.id && job.id.includes('-p0-'));
 
 		let shouldWait = false;
