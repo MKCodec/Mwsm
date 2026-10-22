@@ -1362,7 +1362,7 @@ const GetSchedule = async () => {
 						if (global.io) {
 							global.io.emit('schedresume', Lock.Identifier);
 						}
-						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('lock', 'false', Lock.Identifier);
+						await link.prepare('UPDATE scheduling SET process=?, unlock=? WHERE title=?').run('load', 'false', Lock.Identifier);
 					}
 				}
 			} else if (onUnlockConfig && isUnLock >= 1) {
@@ -1492,6 +1492,7 @@ const GetSchedule = async () => {
 		return true;
 
 	} catch (error) {
+		console.error('[GetSchedule] -> ERRO CAPTURADO NO CATCH:', error);
 		return false;
 	}
 };
